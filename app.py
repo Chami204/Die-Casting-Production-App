@@ -10,6 +10,9 @@ APP_TITLE = "Flow Chart Data App (Sheets)"
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"  # local display
 
 # ------------- Google Sheets Auth -------------
+import streamlit as st
+import gspread
+from google.oauth2.service_account import Credentials
 
 def get_gs_client():
     scopes = [
@@ -22,8 +25,10 @@ def get_gs_client():
     return gspread.authorize(creds)
 
 def open_spreadsheet(client):
-    name = st.secrets["gsheet"]["FlowApp_Data"]
+    # Spreadsheet name from secrets
+    name = st.secrets["gsheet"]["spreadsheet_name"]
     return client.open(name)
+
 
 
 def ensure_worksheets(sh):
@@ -271,4 +276,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
