@@ -6,14 +6,10 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # ------------- Settings -------------
-APP_TITLE = "Flow Chart Data App (Sheets)"
+APP_TITLE = "Die Casting Production App"
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"  # local display
 
 # ------------- Google Sheets Auth -------------
-import streamlit as st
-import gspread
-from google.oauth2.service_account import Credentials
-
 def get_gs_client():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
@@ -25,14 +21,11 @@ def get_gs_client():
     return gspread.authorize(creds)
 
 def open_spreadsheet(client):
-    # Spreadsheet name from secrets
-    name = st.secrets["gsheet"]["FlowApp_Data"]
+    name = st.secrets["gsheet"]["spreadsheet_name"]
     return client.open(name)
 
-
-
 def ensure_worksheets(sh):
-    # Ensure Config sheet
+    # Config sheet
     try:
         ws_config = sh.worksheet("Config")
     except gspread.WorksheetNotFound:
@@ -40,7 +33,7 @@ def ensure_worksheets(sh):
         ws_config.update("A1", [["Product", "Subtopic"]])
         ws_config.freeze(rows=1)
 
-    # Ensure History sheet
+    # History sheet
     try:
         ws_history = sh.worksheet("History")
     except gspread.WorksheetNotFound:
@@ -52,7 +45,6 @@ def ensure_worksheets(sh):
 
 # ------------- Config helpers -------------
 def read_config(ws_config) -> dict:
-    """Returns dict: {product: [sub1, sub2, ...]}"""
     values = ws_config.get_all_records()
     cfg = {}
     for row in values:
@@ -80,7 +72,6 @@ def get_headers(ws_history):
     return headers if headers else FIXED_COLS[:]
 
 def ensure_headers(ws_history, needed_headers):
-    """Add any missing headers to the History header row (append at the end)."""
     headers = get_headers(ws_history)
     changed = False
     for h in needed_headers:
@@ -93,8 +84,6 @@ def ensure_headers(ws_history, needed_headers):
     return headers
 
 def append_history(ws_history, record: dict):
-    """Append a row aligned to headers."""
-    headers = get_headers(ws_history)
     headers = ensure_headers(ws_history, list(record.keys()))
     row = [record.get(h, "") for h in headers]
     ws_history.append_row(row, value_input_option="USER_ENTERED")
@@ -110,7 +99,6 @@ def get_recent_entries(ws_history, product: str, limit: int = 50) -> pd.DataFram
     return df
 
 def delete_by_entry_id(ws_history, entry_id: str) -> bool:
-    # Find the cell with EntryID; delete that row.
     try:
         cell = ws_history.find(entry_id)
         ws_history.delete_rows(cell.row)
@@ -120,7 +108,6 @@ def delete_by_entry_id(ws_history, entry_id: str) -> bool:
 
 # ------------- Flowchart preview (Admin) -------------
 def flowchart_dot(cfg: dict) -> str:
-    # Simple Graphviz DOT: Product -> Subtopic
     lines = ['digraph G {', 'rankdir=LR;', 'node [shape=box, style=rounded];']
     for product, subs in cfg.items():
         p_id = product.replace(" ", "_")
@@ -132,24 +119,24 @@ def flowchart_dot(cfg: dict) -> str:
     lines.append("}")
     return "\n".join(lines)
 
-# ------------- UI -------------
+# ------------- Admin UI -------------
 def admin_ui(cfg: dict, ws_config):
     st.subheader("Admin • Manage Products & Subtopics")
 
-    # Create
+    # Create Product
     with st.expander("Create New Product"):
         new_product = st.text_input("New Product Name")
         if st.button("Create Product"):
             if not new_product.strip():
                 st.warning("Enter a valid product name.")
             elif new_product in cfg:
-                st.warning("That product already exists.")
+                st.warning("Product already exists.")
             else:
                 cfg[new_product] = []
                 write_config(ws_config, cfg)
                 st.success(f"Product '{new_product}' created.")
 
-    # Edit
+    # Edit Product
     if cfg:
         with st.expander("Edit Existing Product"):
             prod = st.selectbox("Select Product", sorted(cfg.keys()))
@@ -160,29 +147,29 @@ def admin_ui(cfg: dict, ws_config):
             with col1:
                 new_sub = st.text_input("Add Subtopic")
                 if st.button("Add Subtopic"):
-                    if not new_sub.strip():
-                        st.warning("Enter a valid subtopic.")
-                    else:
+                    if new_sub.strip():
                         cfg[prod].append(new_sub.strip())
                         write_config(ws_config, cfg)
                         st.success(f"Added '{new_sub}' to {prod}.")
+                    else:
+                        st.warning("Enter a valid subtopic.")
 
             with col2:
                 subs_to_remove = st.multiselect("Remove subtopics", cfg[prod])
                 if st.button("Remove Selected"):
-                    if not subs_to_remove:
-                        st.info("Select items to remove.")
-                    else:
+                    if subs_to_remove:
                         cfg[prod] = [s for s in cfg[prod] if s not in subs_to_remove]
                         write_config(ws_config, cfg)
                         st.warning(f"Removed: {', '.join(subs_to_remove)}")
+                    else:
+                        st.info("Select items to remove.")
 
         with st.expander("Delete Product"):
             prod_del = st.selectbox("Choose product to delete", sorted(cfg.keys()))
             if st.button("Delete Product Permanently"):
                 del cfg[prod_del]
                 write_config(ws_config, cfg)
-                st.error(f"Deleted product '{prod_del}' and its subtopics.")
+                st.error(f"Deleted product '{prod_del}'.")
 
     st.divider()
     st.subheader("Current Flowchart Templates")
@@ -195,6 +182,7 @@ def admin_ui(cfg: dict, ws_config):
     else:
         st.info("No products yet. Create one above.")
 
+# ------------- User UI -------------
 def user_ui(cfg: dict, ws_history):
     st.subheader("User • Enter Data")
     if not cfg:
@@ -208,7 +196,6 @@ def user_ui(cfg: dict, ws_history):
     st.write("Fill **all subtopics** below:")
     values = {}
     for sub in cfg[product]:
-        # Plain text inputs keep it simple; you can change to number_input/time_input later if needed.
         values[sub] = st.text_input(sub)
 
     comments = st.text_area("Comments")
@@ -217,7 +204,6 @@ def user_ui(cfg: dict, ws_history):
         entry_id = uuid.uuid4().hex
         timestamp = datetime.now().strftime(TIME_FORMAT)
 
-        # Build a single-row record with dynamic columns
         record = {
             "EntryID": entry_id,
             "Timestamp": timestamp,
@@ -226,10 +212,7 @@ def user_ui(cfg: dict, ws_history):
             **values
         }
 
-        # Ensure headers exist, then append
-        ensure_headers(ws_history, list(record.keys()))
         append_history(ws_history, record)
-
         st.success(f"Saved! EntryID: {entry_id}")
 
     st.divider()
@@ -241,7 +224,6 @@ def user_ui(cfg: dict, ws_history):
 
     st.dataframe(df, use_container_width=True, hide_index=True)
 
-    # Delete by EntryID (simple & safe)
     ids = df["EntryID"].tolist() if "EntryID" in df.columns else []
     if ids:
         del_id = st.selectbox("Select EntryID to delete", ids)
@@ -252,6 +234,7 @@ def user_ui(cfg: dict, ws_history):
             else:
                 st.error("Could not delete — please try again.")
 
+# ------------- Main -------------
 def main():
     st.set_page_config(page_title=APP_TITLE, page_icon="🗂️", layout="wide")
     st.title(APP_TITLE)
@@ -259,7 +242,6 @@ def main():
     client = get_gs_client()
     sh = open_spreadsheet(client)
     ws_config, ws_history = ensure_worksheets(sh)
-
     cfg = read_config(ws_config)
 
     st.sidebar.header("Navigation")
@@ -276,6 +258,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
