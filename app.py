@@ -7,7 +7,6 @@ from google.oauth2.service_account import Credentials
 
 # ------------------ Settings ------------------
 APP_TITLE = "Die Casting Production App"
-TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 DEFAULT_SUBTOPICS = [
     "Input number of pcs",
     "Input time",
@@ -47,8 +46,7 @@ def ensure_worksheets(sh):
         ws_config = sh.worksheet("Config")
     except gspread.WorksheetNotFound:
         ws_config = sh.add_worksheet(title="Config", rows=1000, cols=2)
-        rows = [["Product", "Subtopic"]]
-        ws_config.update("A1", rows)
+        ws_config.update("A1", [["Product", "Subtopic"]])
         ws_config.freeze(rows=1)
 
     # History sheet
@@ -56,135 +54,147 @@ def ensure_worksheets(sh):
         ws_history = sh.worksheet("History")
     except gspread.WorksheetNotFound:
         ws_history = sh.add_worksheet(title="History", rows=2000, cols=50)
-        ws_history.update("A1", [FIXED_COLS + DEFAULT_SUBTOPICS])
+        headers = FIXED_COLS + DEFAULT_SUBTOPICS
+        ws_history.update("A1", [headers])
         ws_history.freeze(rows=1)
 
     return ws_config, ws_history
 
 # ------------------ Config & History Functions ------------------
 def read_config(ws_config):
-    values = ws_config.get_all_records()
-    cfg = {}
-    for row in values:
-        p = str(row.get("Product", "")).strip()
-        s = str(row.get("Subtopic", "")).strip()
-        if not p or not s:
-            continue
-        cfg.setdefault(p, []).append(s)
-    return cfg
+    try:
+        values = ws_config.get_all_records()
+        cfg = {}
+        for row in values:
+            p = str(row.get("Product", "")).strip()
+            s = str(row.get("Subtopic", "")).strip()
+            if p and s:
+                cfg.setdefault(p, []).append(s)
+        return cfg
+    except Exception as e:
+        st.error(f"Error reading config: {str(e)}")
+        return {}
 
-def write_config(ws_config, cfg: dict):
-    rows = [["Product", "Subtopic"]]
-    for product, subs in cfg.items():
-        for s in subs:
-            rows.append([product, s])
-    ws_config.clear()
-    ws_config.update("A1", rows)
-    ws_config.freeze(rows=1)
+def write_config(ws_config, cfg):
+    try:
+        rows = [["Product", "Subtopic"]]
+        for product, subs in cfg.items():
+            for s in subs:
+                rows.append([product, s])
+        ws_config.update("A1", rows)
+        return True
+    except Exception as e:
+        st.error(f"Error writing config: {str(e)}")
+        return False
 
-def get_recent_entries(ws_history, product: str, limit: int = 50) -> pd.DataFrame:
-    values = ws_history.get_all_records()
-    if not values:
+def append_history(ws_history, record):
+    try:
+        headers = ws_history.row_values(1)
+        row = [record.get(h, "") for h in headers]
+        ws_history.append_row(row)
+        return True
+    except Exception as e:
+        st.error(f"Error saving history: {str(e)}")
+        return False
+
+def get_recent_entries(ws_history, product, limit=50):
+    try:
+        values = ws_history.get_all_records()
+        if not values:
+            return pd.DataFrame()
+        df = pd.DataFrame(values)
+        if "Product" in df.columns:
+            df = df[df["Product"] == product]
+        return df.sort_values("Timestamp", ascending=False).head(limit)
+    except Exception as e:
+        st.error(f"Error reading history: {str(e)}")
         return pd.DataFrame()
-    df = pd.DataFrame(values)
-    if "Product" in df.columns:
-        df = df[df["Product"] == product]
-    df = df.sort_values(by="Timestamp", ascending=False).head(limit)
-    return df
 
 # ------------------ UI Functions ------------------
 def admin_ui(ws_config):
     st.subheader("Admin • Manage Products & Subtopics")
     cfg = read_config(ws_config)
 
-    # Create new product
     with st.expander("Create New Product"):
         new_product = st.text_input("New Product Name")
         if st.button("Create Product"):
             if not new_product.strip():
                 st.warning("Enter a valid product name.")
             elif new_product in cfg:
-                st.warning("That product already exists.")
+                st.warning("Product already exists.")
             else:
                 cfg[new_product] = DEFAULT_SUBTOPICS.copy()
-                write_config(ws_config, cfg)
-                st.success(f"Product '{new_product}' created with default subtopics.")
-                st.st.rerun()()
+                if write_config(ws_config, cfg):
+                    st.success(f"Created product '{new_product}'")
+                    st.experimental_rerun()
 
-    # Edit existing product
     if cfg:
         with st.expander("Edit Product"):
-            prod = st.selectbox("Select Product", sorted(cfg.keys()))
-            st.caption("Current subtopics:")
-            st.write(cfg[prod] if cfg[prod] else "— none —")
+            product = st.selectbox("Select Product", sorted(cfg.keys()))
+            st.write("Current subtopics:", cfg[product])
 
-            new_sub = st.text_input("Add Subtopic")
-            if st.button("Add Subtopic to Product"):
+            new_sub = st.text_input("Add New Subtopic")
+            if st.button("Add Subtopic"):
                 if new_sub.strip():
-                    cfg[prod].append(new_sub.strip())
-                    write_config(ws_config, cfg)
-                    st.success(f"Added '{new_sub}' to {prod}.")
-                    st.st.rerun()()
+                    cfg[product].append(new_sub.strip())
+                    if write_config(ws_config, cfg):
+                        st.success(f"Added subtopic '{new_sub}'")
+                        st.experimental_rerun()
 
-            subs_to_remove = st.multiselect("Remove subtopics", cfg[prod])
-            if st.button("Remove Selected Subtopics"):
-                if subs_to_remove:
-                    cfg[prod] = [s for s in cfg[prod] if s not in subs_to_remove]
-                    write_config(ws_config, cfg)
-                    st.warning(f"Removed: {', '.join(subs_to_remove)}")
-                    st.st.rerun()()
+            to_remove = st.multiselect("Select subtopics to remove", cfg[product])
+            if st.button("Remove Selected"):
+                cfg[product] = [s for s in cfg[product] if s not in to_remove]
+                if write_config(ws_config, cfg):
+                    st.success("Subtopic(s) removed")
+                    st.experimental_rerun()
 
-        # Delete product
         with st.expander("Delete Product"):
-            prod_del = st.selectbox("Choose product to delete", sorted(cfg.keys()))
-            if st.button("Delete Product Permanently"):
-                del cfg[prod_del]
-                write_config(ws_config, cfg)
-                st.error(f"Deleted product '{prod_del}' and its subtopics.")
-                st.st.rerun()()
+            to_delete = st.selectbox("Product to delete", sorted(cfg.keys()))
+            if st.button("Delete Permanently"):
+                del cfg[to_delete]
+                if write_config(ws_config, cfg):
+                    st.error(f"Deleted product '{to_delete}'")
+                    st.experimental_rerun()
 
 def user_ui(ws_config, ws_history):
-    st.subheader("User • Enter Data")
+    st.subheader("Production Data Entry")
     cfg = read_config(ws_config)
     
     if not cfg:
-        st.info("No products available yet. Ask Admin to create a product in Admin mode.")
+        st.info("No products configured. Please contact admin.")
         return
 
-    product = st.selectbox("Select Main Product", sorted(cfg.keys()))
-    current_subtopics = cfg.get(product, DEFAULT_SUBTOPICS)
-    
+    product = st.selectbox("Select Product", sorted(cfg.keys()))
+    subtopics = cfg.get(product, DEFAULT_SUBTOPICS)
+
     values = {}
-    for subtopic in current_subtopics:
-        if "number of pcs" in subtopic.lower() or "num of pcs" in subtopic.lower():
+    for subtopic in subtopics:
+        if "number" in subtopic.lower() or "num" in subtopic.lower():
             values[subtopic] = st.number_input(subtopic, min_value=0, step=1)
         elif "time" in subtopic.lower():
             values[subtopic] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
+
     comments = st.text_area("Comments")
 
-    if st.button("Submit"):
-        entry_id = uuid.uuid4().hex
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if st.button("Submit Entry"):
         record = {
-            "EntryID": entry_id,
-            "Timestamp": timestamp,
+            "EntryID": uuid.uuid4().hex,
+            "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "Product": product,
             **values,
             "Comments": comments
         }
-        ws_history.append_row(list(record.values()))
-        st.success(f"Saved! EntryID: {entry_id}")
-        st.rerun()
+        if append_history(ws_history, record):
+            st.success("Entry saved successfully!")
+            st.experimental_rerun()
 
+    st.subheader("Recent Entries")
     df = get_recent_entries(ws_history, product)
-    if not df.empty:
-        st.subheader("Recent Entries")
-        st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(df if not df.empty else pd.DataFrame(), use_container_width=True)
 
 # ------------------ Main App ------------------
 def main():
-    st.set_page_config(page_title=APP_TITLE, page_icon="🗂️", layout="wide")
+    st.set_page_config(page_title=APP_TITLE, layout="wide")
     st.title(APP_TITLE)
 
     try:
@@ -192,15 +202,17 @@ def main():
         sh = open_spreadsheet(client)
         ws_config, ws_history = ensure_worksheets(sh)
         
-        st.sidebar.header("Navigation")
-        mode = st.sidebar.radio("Mode", ["User", "Admin"])
+        mode = st.sidebar.radio(
+            "Application Mode",
+            ["Data Entry", "Admin"],
+            index=0
+        )
 
         if mode == "Admin":
-            pw = st.text_input("Admin Password", type="password")
-            if pw == "admin123":
+            if st.text_input("Admin Password", type="password") == "admin123":
                 admin_ui(ws_config)
-            elif pw:
-                st.info("Incorrect admin password")
+            else:
+                st.warning("Please enter the correct admin password")
         else:
             user_ui(ws_config, ws_history)
 
@@ -209,5 +221,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
