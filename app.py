@@ -200,8 +200,18 @@ def user_ui(cfg: dict, ws_history):
 
     st.write("Fill **all subtopics** below:")
     values = {}
+    current_time = datetime.now().strftime(TIME_FORMAT)
+
     for sub in cfg[product]:
-        values[sub] = st.text_input(sub)
+        # Auto-set Input/Output time
+        if sub == "Input time":
+            values[sub] = current_time
+            st.text(f"{sub}: {values[sub]}")
+        elif sub == "Output time":
+            values[sub] = current_time
+            st.text(f"{sub}: {values[sub]}")
+        else:
+            values[sub] = st.text_input(sub)
 
     comments = st.text_area("Comments")
 
@@ -231,6 +241,7 @@ def user_ui(cfg: dict, ws_history):
             else:
                 st.error("Could not delete — please try again.")
 
+
 # ------------------ Main ------------------
 def main():
     st.set_page_config(page_title=APP_TITLE, page_icon="🗂️", layout="wide")
@@ -255,3 +266,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
