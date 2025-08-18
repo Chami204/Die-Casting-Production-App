@@ -10,26 +10,21 @@ APP_TITLE = "Flow Chart Data App (Sheets)"
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"  # local display
 
 # ------------- Google Sheets Auth -------------
+
 def get_gs_client():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
     ]
     creds = Credentials.from_service_account_info(
-        dict(st.secrets["gcp_service_account"]), scopes=scopes
+        st.secrets["gcp_service_account"], scopes=scopes
     )
     return gspread.authorize(creds)
 
 def open_spreadsheet(client):
-    name = st.secrets["gsheet"]["spreadsheet_name"]
-    try:
-        return client.open(name)
-    except Exception as e:
-        st.error(
-            f"Could not open spreadsheet '{name}'. "
-            "Make sure it exists and is shared (Editor) with the service account email."
-        )
-        st.stop()
+    name = st.secrets["gsheet"]["FlowApp_Data"]
+    return client.open(name)
+
 
 def ensure_worksheets(sh):
     # Ensure Config sheet
@@ -276,3 +271,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
