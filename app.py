@@ -19,38 +19,33 @@ DEFAULT_SUBTOPICS = [
 
 # ------------------ Google Sheets ------------------
 def get_gs_client():
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive",
-    ]
-    creds = Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"], scopes=scopes
-    )
-    return gspread.authorize(creds)
+    try:
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ]
+        creds = Credentials.from_service_account_info(
+            st.secrets["gcp_service_account"], scopes=scopes
+        )
+        return gspread.authorize(creds)
+    except Exception as e:
+        st.error(f"Failed to authenticate with Google Sheets: {str(e)}")
+        st.stop()
 
 def open_spreadsheet(client):
-    name = st.secrets["gsheet"]["spreadsheet_name"]
-    return client.open(name)
-
-def ensure_worksheets(sh):
-    # Config sheet
     try:
-        ws_config = sh.worksheet("Config")
-    except gspread.WorksheetNotFound:
-        ws_config = sh.add_worksheet(title="Config", rows=1000, cols=2)
-        rows = [["Product", "Subtopic"]]
-        ws_config.update("A1", rows)
-        ws_config.freeze(rows=1)
+        name = st.secrets["gsheet"]["spreadsheet_name"]
+        return client.open(name)
+    except gspread.SpreadsheetNotFound:
+        st.error(f"Spreadsheet '{name}' not found. Please check the name in your secrets.")
+        st.stop()
+    except gspread.APIError as e:
+        st.error(f"Google Sheets API error: {str(e)}")
+        st.stop()
+    except Exception as e:
+        st.error(f"Error opening spreadsheet: {str(e)}")
+        st.stop()
 
-    # History sheet
-    try:
-        ws_history = sh.worksheet("History")
-    except gspread.WorksheetNotFound:
-        ws_history = sh.add_worksheet(title="History", rows=2000, cols=50)
-        ws_history.update("A1", [["EntryID", "Timestamp", "Product", "Comments"] + DEFAULT_SUBTOPICS])
-        ws_history.freeze(rows=1)
-
-    return ws_config, ws_history
 
 # ------------------ Config helpers ------------------
 def read_config(ws_config):
@@ -247,22 +242,29 @@ def main():
     st.set_page_config(page_title=APP_TITLE, page_icon="🗂️", layout="wide")
     st.title(APP_TITLE)
 
-    client = get_gs_client()
-    sh = open_spreadsheet(client)
-    ws_config, ws_history = ensure_worksheets(sh)
-    
-    st.sidebar.header("Navigation")
-    mode = st.sidebar.radio("Mode", ["User", "Admin"])
+    try:
+        client = get_gs_client()
+        sh = open_spreadsheet(client)
+        ws_config, ws_history = ensure_worksheets(sh)
+        
+        st.sidebar.header("Navigation")
+        mode = st.sidebar.radio("Mode", ["User", "Admin"])
 
-    if mode == "Admin":
-        pw = st.text_input("Admin Password", type="password")
-        if pw == "admin123":
-            admin_ui(ws_config)
+        if mode == "Admin":
+            pw = st.text_input("Admin Password", type="password")
+            if pw == "admin123":
+                admin_ui(ws_config)
+            else:
+                if pw:  # Only show message if password was entered
+                    st.info("Enter the correct admin password to manage templates.")
         else:
-            st.info("Enter the correct admin password to manage templates.")
-    else:
-        user_ui(ws_config, ws_history)  # Pass both worksheets to user_ui
+            user_ui(ws_config, ws_history)
+
+    except Exception as e:
+        st.error(f"Application error: {str(e)}")
+        st.stop()
 
 if __name__ == "__main__":
     main()
+
 
