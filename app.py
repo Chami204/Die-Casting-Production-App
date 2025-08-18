@@ -108,7 +108,7 @@ def delete_by_entry_id(ws_history, entry_id):
 
 # ----------------- Admin UI -----------------
 def admin_ui(cfg, ws_config):
-    st.subheader("Admin • Manage Products")
+    st.subheader("Manage Products")
 
     # Create new product
     with st.expander("Create New Product"):
@@ -151,7 +151,7 @@ def admin_ui(cfg, ws_config):
 
 # ----------------- User UI -----------------
 def user_ui(cfg, ws_history):
-    st.subheader("User • Enter Data")
+    st.subheader("Enter Data")
     if not cfg:
         st.info("No products available. Admin needs to create one first.")
         return
@@ -211,4 +211,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
