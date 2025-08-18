@@ -249,7 +249,7 @@ def main():
 
     if mode == "Admin":
         pw = st.text_input("Admin Password", type="password")
-        if pw == st.secrets["security"]["admin123"]:
+        if pw == st.secrets["security"]["admin_password"]:
             admin_ui(cfg, ws_config)
         else:
             st.info("Enter the correct admin password to manage templates.")
@@ -258,3 +258,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
