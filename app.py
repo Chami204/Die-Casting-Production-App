@@ -276,10 +276,16 @@ def main():
         pw = st.text_input("Admin Password", type="password")
         if pw == "admin123":
             admin_ui(cfg, ws_config)
+            # Reload config from Google Sheets after admin edits
+            cfg = read_config(ws_config)
         else:
             st.info("Enter the correct admin password to manage templates.")
     else:
+        # Reload cfg to ensure users see latest subtopics
+        cfg = read_config(ws_config)
         user_ui(cfg, ws_history)
+
 
 if __name__ == "__main__":
     main()
+
