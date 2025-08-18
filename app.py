@@ -4,7 +4,6 @@ import uuid
 from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
-from functools import lru_cache
 
 # ------------------ Settings ------------------
 APP_TITLE = "Die Casting Production App"
@@ -18,8 +17,7 @@ DEFAULT_SUBTOPICS = [
     "Number of rejects"
 ]
 
-# ------------------ Cached Google Sheets Functions ------------------
-@st.cache_resource(ttl=300)
+# ------------------ Google Sheets ------------------
 def get_gs_client():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
@@ -30,29 +28,10 @@ def get_gs_client():
     )
     return gspread.authorize(creds)
 
-@st.cache_resource(ttl=300)
-def open_spreadsheet(_client):
+def open_spreadsheet(client):
     name = st.secrets["gsheet"]["spreadsheet_name"]
-    return _client.open(name)
+    return client.open(name)
 
-@st.cache_data(ttl=60)
-def read_config(ws_config):
-    values = ws_config.get_all_records()
-    cfg = {}
-    for row in values:
-        p = str(row.get("Product", "")).strip()
-        s = str(row.get("Subtopic", "")).strip()
-        if not p or not s:
-            continue
-        cfg.setdefault(p, []).append(s)
-    return cfg
-
-@st.cache_data(ttl=60)
-def get_headers(_ws_history):
-    headers = _ws_history.row_values(1)
-    return headers if headers else FIXED_COLS + DEFAULT_SUBTOPICS
-
-# ------------------ Worksheet Management ------------------
 def ensure_worksheets(sh):
     # Config sheet
     try:
@@ -74,6 +53,17 @@ def ensure_worksheets(sh):
     return ws_config, ws_history
 
 # ------------------ Config helpers ------------------
+def read_config(ws_config):
+    values = ws_config.get_all_records()
+    cfg = {}
+    for row in values:
+        p = str(row.get("Product", "")).strip()
+        s = str(row.get("Subtopic", "")).strip()
+        if not p or not s:
+            continue
+        cfg.setdefault(p, []).append(s)
+    return cfg
+
 def write_config(ws_config, cfg: dict):
     rows = [["Product", "Subtopic"]]
     for product, subs in cfg.items():
@@ -82,10 +72,13 @@ def write_config(ws_config, cfg: dict):
     ws_config.clear()
     ws_config.update("A1", rows)
     ws_config.freeze(rows=1)
-    st.cache_data.clear()  # Clear cache to force refresh
 
 # ------------------ History helpers ------------------
 FIXED_COLS = ["EntryID", "Timestamp", "Product", "Comments"]
+
+def get_headers(ws_history):
+    headers = ws_history.row_values(1)
+    return headers if headers else FIXED_COLS + DEFAULT_SUBTOPICS
 
 def ensure_headers(ws_history, needed_headers):
     headers = get_headers(ws_history)
@@ -103,10 +96,9 @@ def append_history(ws_history, record: dict):
     headers = ensure_headers(ws_history, list(record.keys()))
     row = [record.get(h, "") for h in headers]
     ws_history.append_row(row, value_input_option="USER_ENTERED")
-    st.cache_data.clear()  # Clear cache to force refresh
 
-def get_recent_entries(_ws_history, product: str, limit: int = 50) -> pd.DataFrame:
-    values = _ws_history.get_all_records()
+def get_recent_entries(ws_history, product: str, limit: int = 50) -> pd.DataFrame:
+    values = ws_history.get_all_records()
     if not values:
         return pd.DataFrame()
     df = pd.DataFrame(values)
@@ -119,7 +111,6 @@ def delete_by_entry_id(ws_history, entry_id: str) -> bool:
     try:
         cell = ws_history.find(entry_id)
         ws_history.delete_rows(cell.row)
-        st.cache_data.clear()  # Clear cache to force refresh
         return True
     except Exception:
         return False
@@ -157,7 +148,7 @@ def admin_ui(cfg: dict, ws_config):
     # Edit existing product
     if cfg:
         with st.expander("Edit Product"):
-            prod = st.selectbox("Select Product", sorted(cfg.keys()), key="prod_select")
+            prod = st.selectbox("Select Product", sorted(cfg.keys()))
             st.caption("Current subtopics:")
             st.write(cfg[prod] if cfg[prod] else "— none —")
 
@@ -170,7 +161,7 @@ def admin_ui(cfg: dict, ws_config):
                     st.success(f"Added '{new_sub}' to {prod}.")
 
             # Remove subtopics
-            subs_to_remove = st.multiselect("Remove subtopics", cfg[prod], key="subs_to_remove")
+            subs_to_remove = st.multiselect("Remove subtopics", cfg[prod])
             if st.button("Remove Selected Subtopics"):
                 if subs_to_remove:
                     cfg[prod] = [s for s in cfg[prod] if s not in subs_to_remove]
@@ -179,7 +170,7 @@ def admin_ui(cfg: dict, ws_config):
 
         # Delete product
         with st.expander("Delete Product"):
-            prod_del = st.selectbox("Choose product to delete", sorted(cfg.keys()), key="prod_delete")
+            prod_del = st.selectbox("Choose product to delete", sorted(cfg.keys()))
             if st.button("Delete Product Permanently"):
                 del cfg[prod_del]
                 write_config(ws_config, cfg)
@@ -197,13 +188,14 @@ def admin_ui(cfg: dict, ws_config):
         st.info("No products yet. Create one above.")
 
 # ------------------ User UI ------------------
+# ------------------ User UI ------------------
 def user_ui(cfg: dict, ws_history):
     st.subheader("User • Enter Data")
     if not cfg:
         st.info("No products available yet. Ask Admin to create a product in Admin mode.")
         return
 
-    product = st.selectbox("Select Main Product", sorted(cfg.keys()), key="user_product")
+    product = st.selectbox("Select Main Product", sorted(cfg.keys()))
     if not product:
         return
 
@@ -217,11 +209,11 @@ def user_ui(cfg: dict, ws_history):
     # Dynamic form based on current subtopics
     for subtopic in current_subtopics:
         if "number of pcs" in subtopic.lower() or "num of pcs" in subtopic.lower():
-            values[subtopic] = st.number_input(subtopic, min_value=0, step=1, key=f"num_{subtopic}")
+            values[subtopic] = st.number_input(subtopic, min_value=0, step=1)
         elif "time" in subtopic.lower():
             values[subtopic] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    comments = st.text_area("Comments", key="user_comments")
+    comments = st.text_area("Comments")
 
     if st.button("Submit"):
         entry_id = uuid.uuid4().hex
@@ -244,6 +236,7 @@ def user_ui(cfg: dict, ws_history):
     else:
         st.caption("No entries yet.")
 
+
 # ------------------ Main ------------------
 def main():
     st.set_page_config(page_title=APP_TITLE, page_icon="🗂️", layout="wide")
@@ -252,10 +245,7 @@ def main():
     client = get_gs_client()
     sh = open_spreadsheet(client)
     ws_config, ws_history = ensure_worksheets(sh)
-    
-    # Use session state to store config and prevent repeated reads
-    if 'cfg' not in st.session_state:
-        st.session_state.cfg = read_config(ws_config)
+    cfg = read_config(ws_config)
 
     st.sidebar.header("Navigation")
     mode = st.sidebar.radio("Mode", ["User", "Admin"])
@@ -263,11 +253,11 @@ def main():
     if mode == "Admin":
         pw = st.text_input("Admin Password", type="password")
         if pw == "admin123":
-            admin_ui(st.session_state.cfg, ws_config)
+            admin_ui(cfg, ws_config)
         else:
             st.info("Enter the correct admin password to manage templates.")
     else:
-        user_ui(st.session_state.cfg, ws_history)
+        user_ui(cfg, ws_history)
 
 if __name__ == "__main__":
     main()
