@@ -205,9 +205,10 @@ def main():
         if pw == st.secrets["security"]["admin_password"]:
             admin_ui(cfg, ws_config)
         else:
-            st.info("Enter the correct admin password to manage templates.")
+            st.info("admin_password")
     else:
         user_ui(cfg, ws_history)
 
 if __name__ == "__main__":
     main()
+
