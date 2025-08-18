@@ -20,11 +20,12 @@ DEFAULT_SUBTOPICS = [
 # ------------------ Initialize Session State ------------------
 if 'cfg' not in st.session_state:
     st.session_state.cfg = {}
+if 'initialized' not in st.session_state:
+    st.session_state.initialized = False
 
 # ------------------ Google Sheets ------------------
 def get_gs_client():
     try:
-        # Verify secrets exist
         if 'gcp_service_account' not in st.secrets:
             st.error("Google Service Account credentials not found in secrets.")
             st.stop()
@@ -34,7 +35,6 @@ def get_gs_client():
             "https://www.googleapis.com/auth/drive",
         ]
         
-        # Create credentials from secrets
         creds_dict = {
             "type": st.secrets["gcp_service_account"]["type"],
             "project_id": st.secrets["gcp_service_account"]["project_id"],
@@ -50,19 +50,26 @@ def get_gs_client():
         
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         return gspread.authorize(creds)
-        
     except Exception as e:
         st.error(f"Failed to authenticate with Google Sheets: {str(e)}")
         st.stop()
 
 def open_spreadsheet(client):
-    name = st.secrets["gsheet"]["spreadsheet_name"]
-    return client.open(name)
+    try:
+        name = st.secrets["gsheet"]["spreadsheet_name"]
+        return client.open(name)
+    except Exception as e:
+        st.error(f"Error opening spreadsheet: {str(e)}")
+        st.stop()
 
 def ensure_worksheets(sh):
-    # History sheet only (removed config sheet)
     try:
         ws_history = sh.worksheet("History")
+        # Initialize headers if empty
+        if not ws_history.row_values(1):
+            headers = ["EntryID", "Timestamp", "Product", "Comments"] + DEFAULT_SUBTOPICS
+            ws_history.update("A1", [headers])
+            ws_history.freeze(rows=1)
     except gspread.WorksheetNotFound:
         ws_history = sh.add_worksheet(title="History", rows=2000, cols=50)
         headers = ["EntryID", "Timestamp", "Product", "Comments"] + DEFAULT_SUBTOPICS
@@ -70,14 +77,12 @@ def ensure_worksheets(sh):
         ws_history.freeze(rows=1)
     return ws_history
 
-# ------------------ History helpers ------------------
+# ------------------ History Helpers ------------------
 def ensure_history_headers(ws_history, product):
-    # Get current subtopics for the product
-    current_subtopics = st.session_state.cfg.get(product, DEFAULT_SUBTOPICS)
+    current_subtopics = st.session_state.cfg.get(product, DEFAULT_SUBTOPICS.copy())
     headers = ws_history.row_values(1)
     needed_headers = ["EntryID", "Timestamp", "Product", "Comments"] + current_subtopics
     
-    # Update headers if needed
     if set(headers) != set(needed_headers):
         ws_history.update("A1", [needed_headers])
         ws_history.freeze(rows=1)
@@ -89,13 +94,17 @@ def append_history(ws_history, record: dict):
     ws_history.append_row(row, value_input_option="USER_ENTERED")
 
 def get_recent_entries(ws_history, product: str, limit: int = 50) -> pd.DataFrame:
-    values = ws_history.get_all_records()
-    if not values:
+    try:
+        values = ws_history.get_all_records()
+        if not values:
+            return pd.DataFrame()
+        df = pd.DataFrame(values)
+        if "Product" in df.columns:
+            df = df[df["Product"] == product]
+        return df.sort_values(by="Timestamp", ascending=False).head(limit)
+    except Exception as e:
+        st.error(f"Error loading history: {str(e)}")
         return pd.DataFrame()
-    df = pd.DataFrame(values)
-    if "Product" in df.columns:
-        df = df[df["Product"] == product]
-    return df.sort_values(by="Timestamp", ascending=False).head(limit)
 
 # ------------------ Admin UI ------------------
 def admin_ui():
@@ -103,7 +112,7 @@ def admin_ui():
 
     # Create new product
     with st.expander("Create New Product"):
-        new_product = st.text_input("New Product Name")
+        new_product = st.text_input("New Product Name", key="new_product")
         if st.button("Create Product"):
             if not new_product.strip():
                 st.warning("Enter a valid product name.")
@@ -117,12 +126,12 @@ def admin_ui():
     # Edit existing product
     if st.session_state.cfg:
         with st.expander("Edit Product"):
-            prod = st.selectbox("Select Product", sorted(st.session_state.cfg.keys()))
+            prod = st.selectbox("Select Product", sorted(st.session_state.cfg.keys()), key="edit_product")
             st.caption("Current subtopics:")
             st.write(st.session_state.cfg[prod])
 
             # Add new subtopic
-            new_sub = st.text_input("Add Subtopic")
+            new_sub = st.text_input("Add Subtopic", key="new_subtopic")
             if st.button("Add Subtopic to Product"):
                 if new_sub.strip():
                     st.session_state.cfg[prod].append(new_sub.strip())
@@ -130,7 +139,7 @@ def admin_ui():
                     st.rerun()
 
             # Remove subtopics
-            subs_to_remove = st.multiselect("Remove subtopics", st.session_state.cfg[prod])
+            subs_to_remove = st.multiselect("Remove subtopics", st.session_state.cfg[prod], key="remove_subtopics")
             if st.button("Remove Selected Subtopics"):
                 if subs_to_remove:
                     st.session_state.cfg[prod] = [s for s in st.session_state.cfg[prod] if s not in subs_to_remove]
@@ -139,7 +148,7 @@ def admin_ui():
 
         # Delete product
         with st.expander("Delete Product"):
-            prod_del = st.selectbox("Choose product to delete", sorted(st.session_state.cfg.keys()))
+            prod_del = st.selectbox("Choose product to delete", sorted(st.session_state.cfg.keys()), key="delete_product")
             if st.button("Delete Product Permanently"):
                 del st.session_state.cfg[prod_del]
                 st.error(f"Deleted product '{prod_del}' and its subtopics.")
@@ -156,36 +165,44 @@ def user_ui(ws_history):
         st.info("No products available yet. Ask Admin to create a product in Admin mode.")
         return
 
-    product = st.selectbox("Select Main Product", sorted(st.session_state.cfg.keys()))
-    if not product:
-        return
-
-    # Get current subtopics for the selected product
-    current_subtopics = st.session_state.cfg.get(product, DEFAULT_SUBTOPICS)
+    product = st.selectbox("Select Main Product", sorted(st.session_state.cfg.keys()), key="user_product")
+    current_subtopics = st.session_state.cfg.get(product, DEFAULT_SUBTOPICS.copy())
     
     st.write("Fill **all fields** below:")
     values = {}
-    for subtopic in current_subtopics:
-        if "number of pcs" in subtopic.lower() or "num of pcs" in subtopic.lower():
-            values[subtopic] = st.number_input(subtopic, min_value=0, step=1)
-        elif "time" in subtopic.lower():
-            values[subtopic] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    comments = st.text_area("Comments")
+    # Generate dynamic form fields
+    for subtopic in current_subtopics:
+        if "number" in subtopic.lower() or "num" in subtopic.lower() or "rejects" in subtopic.lower():
+            values[subtopic] = st.number_input(subtopic, min_value=0, step=1, key=f"num_{subtopic}")
+        elif "time" in subtopic.lower():
+            values[subtopic] = st.text_input(subtopic, value=datetime.now().strftime(TIME_FORMAT), key=f"time_{subtopic}")
+        else:
+            values[subtopic] = st.text_input(subtopic, key=f"text_{subtopic}")
+    
+    comments = st.text_area("Comments", key="comments")
 
-    if st.button("Submit"):
-        entry_id = uuid.uuid4().hex
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        record = {
-            "EntryID": entry_id,
-            "Timestamp": timestamp,
-            "Product": product,
-            **values,
-            "Comments": comments
-        }
-        append_history(ws_history, record)
-        st.success(f"Saved! EntryID: {entry_id}")
-        st.rerun()
+    if st.button("Submit", key="submit_btn"):
+        # Validate required numeric fields
+        required_fields = [st for st in current_subtopics if "number" in st.lower() or "num" in st.lower()]
+        missing_fields = [f for f in required_fields if not values.get(f, 0)]
+        
+        if missing_fields:
+            st.error(f"Please fill in all required fields: {', '.join(missing_fields)}")
+        else:
+            try:
+                entry_id = uuid.uuid4().hex
+                record = {
+                    "EntryID": entry_id,
+                    "Timestamp": datetime.now().strftime(TIME_FORMAT),
+                    "Product": product,
+                    **values,
+                    "Comments": comments
+                }
+                append_history(ws_history, record)
+                st.success(f"Saved! EntryID: {entry_id}")
+            except Exception as e:
+                st.error(f"Error saving data: {str(e)}")
 
     # Display recent entries
     df = get_recent_entries(ws_history, product)
@@ -193,29 +210,32 @@ def user_ui(ws_history):
         st.subheader("Recent Entries (for this product)")
         st.dataframe(df, use_container_width=True, hide_index=True)
     else:
-        st.caption("No entries yet.")
+        st.caption("No entries yet for this product.")
 
 # ------------------ Main ------------------
 def main():
     st.set_page_config(page_title=APP_TITLE, page_icon="🗂️", layout="wide")
     st.title(APP_TITLE)
 
-    client = get_gs_client()
-    sh = open_spreadsheet(client)
-    ws_history = ensure_worksheets(sh)
+    try:
+        client = get_gs_client()
+        sh = open_spreadsheet(client)
+        ws_history = ensure_worksheets(sh)
 
-    st.sidebar.header("Navigation")
-    mode = st.sidebar.radio("Mode", ["User", "Admin"])
+        st.sidebar.header("Navigation")
+        mode = st.sidebar.radio("Mode", ["User", "Admin"], key="mode_selector")
 
-    if mode == "Admin":
-        pw = st.text_input("Admin Password", type="password")
-        if pw == "admin123":
-            admin_ui()
+        if mode == "Admin":
+            pw = st.text_input("Admin Password", type="password", key="admin_pw")
+            if pw == "admin123":
+                admin_ui()
+            elif pw:  # Only show if password was attempted
+                st.warning("Incorrect admin password")
         else:
-            st.info("Enter the correct admin password to manage templates.")
-    else:
-        user_ui(ws_history)
+            user_ui(ws_history)
+
+    except Exception as e:
+        st.error(f"Application error: {str(e)}")
 
 if __name__ == "__main__":
     main()
-
