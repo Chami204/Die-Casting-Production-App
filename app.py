@@ -109,7 +109,7 @@ def admin_ui(ws_config):
                 cfg[new_product] = DEFAULT_SUBTOPICS.copy()
                 write_config(ws_config, cfg)
                 st.success(f"Product '{new_product}' created with default subtopics.")
-                st.experimental_rerun()
+                st.st.rerun()()
 
     # Edit existing product
     if cfg:
@@ -124,7 +124,7 @@ def admin_ui(ws_config):
                     cfg[prod].append(new_sub.strip())
                     write_config(ws_config, cfg)
                     st.success(f"Added '{new_sub}' to {prod}.")
-                    st.experimental_rerun()
+                    st.st.rerun()()
 
             subs_to_remove = st.multiselect("Remove subtopics", cfg[prod])
             if st.button("Remove Selected Subtopics"):
@@ -132,7 +132,7 @@ def admin_ui(ws_config):
                     cfg[prod] = [s for s in cfg[prod] if s not in subs_to_remove]
                     write_config(ws_config, cfg)
                     st.warning(f"Removed: {', '.join(subs_to_remove)}")
-                    st.experimental_rerun()
+                    st.st.rerun()()
 
         # Delete product
         with st.expander("Delete Product"):
@@ -141,7 +141,7 @@ def admin_ui(ws_config):
                 del cfg[prod_del]
                 write_config(ws_config, cfg)
                 st.error(f"Deleted product '{prod_del}' and its subtopics.")
-                st.experimental_rerun()
+                st.st.rerun()()
 
 def user_ui(ws_config, ws_history):
     st.subheader("User • Enter Data")
@@ -209,4 +209,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
