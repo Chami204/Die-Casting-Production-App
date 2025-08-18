@@ -176,6 +176,35 @@ def admin_ui(cfg: dict, ws_config):
                 write_config(ws_config, cfg)
                 st.error(f"Deleted product '{prod_del}' and its subtopics.")
 
+    
+def admin_reorder_columns(cfg: dict, ws_history):
+    st.subheader("Admin • Reorder Subtopics (Columns)")
+    
+    # Only allow reordering if there are subtopics
+    all_subtopics = FIXED_SUBTOPICS.copy()
+    st.caption("Current order of subtopics:")
+    st.write(all_subtopics)
+
+    # Provide a simple reordering UI
+    reordered = st.multiselect(
+        "Drag subtopics in desired order (top=first column after Product):",
+        options=all_subtopics,
+        default=all_subtopics
+    )
+
+    if st.button("Save New Order"):
+        if set(reordered) != set(all_subtopics):
+            st.error("You must include all subtopics in the new order!")
+        else:
+            headers = ws_history.row_values(1)
+            # Keep EntryID, Timestamp, Product first, Comments last
+            new_headers = ["EntryID", "Timestamp", "Product"] + reordered + ["Comments"]
+            ws_history.update("A1", [new_headers])
+            ws_history.freeze(rows=1)
+            st.success("Subtopic order updated successfully!")
+
+
+    
     st.divider()
     st.subheader("Current Flowchart Templates")
     if cfg:
@@ -284,5 +313,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
