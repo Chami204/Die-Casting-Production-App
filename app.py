@@ -8,7 +8,7 @@ from google.oauth2.service_account import Credentials
 # ------------------ Settings ------------------
 APP_TITLE = "Die Casting Production App"
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
-DEFAULT_SUBTOPICS = [
+FIXED_SUBTOPICS = [
     "Input number of pcs",
     "Input time",
     "Output number of pcs",
@@ -29,56 +29,49 @@ def get_gs_client():
     return gspread.authorize(creds)
 
 def open_spreadsheet(client):
-    name = st.secrets["gsheet"]["spreadsheet_name"]
-    return client.open(name)
+    return client.open("FlowApp_Data")
 
 def ensure_worksheets(sh):
     # Config sheet
     try:
         ws_config = sh.worksheet("Config")
     except gspread.WorksheetNotFound:
-        ws_config = sh.add_worksheet(title="Config", rows=1000, cols=2)
-        rows = [["Product", "Subtopic"]]
-        ws_config.update("A1", rows)
+        ws_config = sh.add_worksheet(title="Config", rows=100, cols=2)
+        ws_config.update("A1", [["Product", "Subtopic"]])
         ws_config.freeze(rows=1)
-
     # History sheet
     try:
         ws_history = sh.worksheet("History")
     except gspread.WorksheetNotFound:
         ws_history = sh.add_worksheet(title="History", rows=2000, cols=50)
-        ws_history.update("A1", [["EntryID", "Timestamp", "Product", "Comments"] + DEFAULT_SUBTOPICS])
+        ws_history.update("A1", [["EntryID","Timestamp","Product"]+FIXED_SUBTOPICS+["Comments"]])
         ws_history.freeze(rows=1)
-
     return ws_config, ws_history
 
 # ------------------ Config helpers ------------------
-def read_config(ws_config):
+def read_config(ws_config) -> dict:
     values = ws_config.get_all_records()
     cfg = {}
     for row in values:
-        p = str(row.get("Product", "")).strip()
-        s = str(row.get("Subtopic", "")).strip()
-        if not p or not s:
-            continue
-        cfg.setdefault(p, []).append(s)
+        p = str(row.get("Product","")).strip()
+        s = str(row.get("Subtopic","")).strip()
+        if not p: continue
+        cfg.setdefault(p, FIXED_SUBTOPICS.copy())
     return cfg
 
 def write_config(ws_config, cfg: dict):
-    rows = [["Product", "Subtopic"]]
-    for product, subs in cfg.items():
-        for s in subs:
-            rows.append([product, s])
+    rows = [["Product","Subtopic"]]
+    for product in cfg:
+        for s in FIXED_SUBTOPICS:
+            rows.append([product,s])
     ws_config.clear()
     ws_config.update("A1", rows)
     ws_config.freeze(rows=1)
 
 # ------------------ History helpers ------------------
-FIXED_COLS = ["EntryID", "Timestamp", "Product", "Comments"]
-
 def get_headers(ws_history):
     headers = ws_history.row_values(1)
-    return headers if headers else FIXED_COLS + DEFAULT_SUBTOPICS
+    return headers if headers else ["EntryID","Timestamp","Product"]+FIXED_SUBTOPICS+["Comments"]
 
 def ensure_headers(ws_history, needed_headers):
     headers = get_headers(ws_history)
@@ -88,48 +81,37 @@ def ensure_headers(ws_history, needed_headers):
             headers.append(h)
             changed = True
     if changed:
-        ws_history.update("A1", [headers])
+        ws_history.update("A1",[headers])
         ws_history.freeze(rows=1)
     return headers
 
 def append_history(ws_history, record: dict):
     headers = ensure_headers(ws_history, list(record.keys()))
-    row = [record.get(h, "") for h in headers]
+    row = [record.get(h,"") for h in headers]
     ws_history.append_row(row, value_input_option="USER_ENTERED")
 
-def get_recent_entries(ws_history, product: str, limit: int = 50) -> pd.DataFrame:
-    values = ws_history.get_all_records()
+def get_recent_entries(ws_history, product: str, limit:int=50):
+    try:
+        values = ws_history.get_all_records()
+    except:
+        return pd.DataFrame()
     if not values:
         return pd.DataFrame()
     df = pd.DataFrame(values)
     if "Product" in df.columns:
-        df = df[df["Product"] == product]
-    df = df.sort_values(by="Timestamp", ascending=False).head(limit)
-    return df
+        df = df[df["Product"]==product]
+    return df.sort_values(by="Timestamp", ascending=False).head(limit)
 
-def delete_by_entry_id(ws_history, entry_id: str) -> bool:
+def delete_by_entry_id(ws_history, entry_id:str):
     try:
         cell = ws_history.find(entry_id)
         ws_history.delete_rows(cell.row)
         return True
-    except Exception:
+    except:
         return False
 
-# ------------------ Flowchart preview ------------------
-def flowchart_dot(cfg: dict) -> str:
-    lines = ['digraph G {', 'rankdir=LR;', 'node [shape=box, style=rounded];']
-    for product, subs in cfg.items():
-        p_id = product.replace(" ", "_")
-        lines.append(f'"{p_id}" [label="{product}", shape=folder];')
-        for s in subs:
-            s_id = f'{p_id}_{s.replace(" ", "_")}'
-            lines.append(f'"{s_id}" [label="{s}"];')
-            lines.append(f'"{p_id}" -> "{s_id}";')
-    lines.append("}")
-    return "\n".join(lines)
-
 # ------------------ Admin UI ------------------
-def admin_ui(cfg: dict, ws_config):
+def admin_ui(cfg, ws_config, ws_history):
     st.subheader("Admin • Manage Products & Subtopics")
 
     # Create new product
@@ -139,155 +121,84 @@ def admin_ui(cfg: dict, ws_config):
             if not new_product.strip():
                 st.warning("Enter a valid product name.")
             elif new_product in cfg:
-                st.warning("That product already exists.")
+                st.warning("Product already exists.")
             else:
-                cfg[new_product] = DEFAULT_SUBTOPICS.copy()
+                cfg[new_product] = FIXED_SUBTOPICS.copy()
                 write_config(ws_config, cfg)
-                st.success(f"Product '{new_product}' created with default subtopics.")
+                st.success(f"Product '{new_product}' created.")
 
-    # Edit existing product
+    # Delete product
     if cfg:
-        with st.expander("Edit Product"):
-            prod = st.selectbox("Select Product", sorted(cfg.keys()))
-            st.caption("Current subtopics:")
-            st.write(cfg[prod] if cfg[prod] else "— none —")
-
-            # Add new subtopic
-            new_sub = st.text_input("Add Subtopic")
-            if st.button("Add Subtopic to Product"):
-                if new_sub.strip():
-                    cfg[prod].append(new_sub.strip())
-                    write_config(ws_config, cfg)
-                    st.success(f"Added '{new_sub}' to {prod}.")
-
-            # Remove subtopics
-            subs_to_remove = st.multiselect("Remove subtopics", cfg[prod])
-            if st.button("Remove Selected Subtopics"):
-                if subs_to_remove:
-                    cfg[prod] = [s for s in cfg[prod] if s not in subs_to_remove]
-                    write_config(ws_config, cfg)
-                    st.warning(f"Removed: {', '.join(subs_to_remove)}")
-
-        # Delete product
         with st.expander("Delete Product"):
             prod_del = st.selectbox("Choose product to delete", sorted(cfg.keys()))
-            if st.button("Delete Product Permanently"):
+            if st.button("Delete Permanently"):
                 del cfg[prod_del]
                 write_config(ws_config, cfg)
-                st.error(f"Deleted product '{prod_del}' and its subtopics.")
+                st.warning(f"Deleted product '{prod_del}'")
 
-    
-def admin_reorder_columns(cfg: dict, ws_history):
-    st.subheader("Admin • Reorder Subtopics (Columns)")
-    
-    # Only allow reordering if there are subtopics
-    all_subtopics = FIXED_SUBTOPICS.copy()
-    st.caption("Current order of subtopics:")
-    st.write(all_subtopics)
+    # Reorder subtopics
+    st.subheader("Reorder Subtopics")
+    for product in cfg:
+        st.write(f"Product: {product}")
+        current_order = cfg[product]
+        reordered = st.multiselect("Drag to reorder", options=current_order, default=current_order, key=product)
+        if st.button(f"Save New Order for {product}", key=f"save_{product}"):
+            if set(reordered)!=set(FIXED_SUBTOPICS):
+                st.error("Include all subtopics in new order!")
+            else:
+                # Update headers in history
+                headers = ["EntryID","Timestamp","Product"] + reordered + ["Comments"]
+                ws_history.update("A1",[headers])
+                ws_history.freeze(rows=1)
+                st.success(f"Updated order for {product}")
 
-    # Provide a simple reordering UI
-    reordered = st.multiselect(
-        "Drag subtopics in desired order (top=first column after Product):",
-        options=all_subtopics,
-        default=all_subtopics
-    )
-
-    if st.button("Save New Order"):
-        if set(reordered) != set(all_subtopics):
-            st.error("You must include all subtopics in the new order!")
-        else:
-            headers = ws_history.row_values(1)
-            # Keep EntryID, Timestamp, Product first, Comments last
-            new_headers = ["EntryID", "Timestamp", "Product"] + reordered + ["Comments"]
-            ws_history.update("A1", [new_headers])
-            ws_history.freeze(rows=1)
-            st.success("Subtopic order updated successfully!")
-
-
-    
     st.divider()
     st.subheader("Current Flowchart Templates")
-    if cfg:
-        st.json(cfg)
-        try:
-            st.graphviz_chart(flowchart_dot(cfg))
-        except Exception:
-            pass
-    else:
-        st.info("No products yet. Create one above.")
+    st.json(cfg)
 
 # ------------------ User UI ------------------
-FIXED_SUBTOPICS = [
-    "Input number of pcs",
-    "Input time",
-    "Output number of pcs",
-    "Output time",
-    "Num of pcs to rework",
-    "Number of rejects"
-]
-
-# Ensure history sheet has proper headers
-def ensure_history_headers(ws_history):
-    headers = ws_history.row_values(1)
-    if not headers or headers[0] != "EntryID":
-        headers = ["EntryID", "Timestamp", "Product"] + FIXED_SUBTOPICS + ["Comments"]
-        ws_history.clear()
-        ws_history.update("A1", [headers])
-        ws_history.freeze(rows=1)
-    return headers
-
-# User UI
-def user_ui(cfg: dict, ws_history):
+def user_ui(cfg, ws_history):
     st.subheader("User • Enter Data")
     if not cfg:
-        st.info("No products available yet. Ask Admin to create a product in Admin mode.")
+        st.info("No products available. Admin must create products.")
         return
-
-    ensure_history_headers(ws_history)
 
     product = st.selectbox("Select Main Product", sorted(cfg.keys()))
-    if not product:
-        return
+    if not product: return
 
-    st.write("Fill **all fields** below:")
     values = {}
+    for sub in cfg[product]:
+        # Automatically track time for Input/Output
+        if "Input time" in sub or "Output time" in sub:
+            values[sub] = datetime.now().strftime(TIME_FORMAT)
+            st.text(f"{sub}: {values[sub]}")
+        else:
+            values[sub] = st.text_input(sub)
 
-    # Only allow numeric input for number of pcs fields
-    values["Input number of pcs"] = st.number_input("Input number of pcs", min_value=0, step=1)
-    values["Input time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    values["Output number of pcs"] = st.number_input("Output number of pcs", min_value=0, step=1)
-    values["Output time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    values["Num of pcs to rework"] = st.number_input("Num of pcs to rework", min_value=0, step=1)
-    values["Number of rejects"] = st.number_input("Number of rejects", min_value=0, step=1)
     comments = st.text_area("Comments")
 
     if st.button("Submit"):
         entry_id = uuid.uuid4().hex
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        record = {
-            "EntryID": entry_id,
-            "Timestamp": timestamp,
-            "Product": product,
-            **values,
-            "Comments": comments
-        }
-        # Append in order of headers
-        headers = ws_history.row_values(1)
-        row = [record.get(h, "") for h in headers]
-        ws_history.append_row(row, value_input_option="USER_ENTERED")
+        timestamp = datetime.now().strftime(TIME_FORMAT)
+        record = {"EntryID": entry_id, "Timestamp": timestamp, "Product": product, "Comments": comments}
+        record.update(values)
+        append_history(ws_history, record)
         st.success(f"Saved! EntryID: {entry_id}")
 
-    # Display recent entries
-    all_records = ws_history.get_all_records()
-    if all_records:
-        df = pd.DataFrame(all_records)
-        df = df[df["Product"] == product].sort_values(by="Timestamp", ascending=False).head(30)
-        st.subheader("Recent Entries (for this product)")
-        st.dataframe(df, use_container_width=True, hide_index=True)
-    else:
+    st.divider()
+    st.subheader("Recent Entries")
+    df = get_recent_entries(ws_history, product)
+    if df.empty:
         st.caption("No entries yet.")
-
-
+    else:
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        ids = df["EntryID"].tolist()
+        del_id = st.selectbox("Select EntryID to delete", ids)
+        if st.button("Delete Selected Entry"):
+            if delete_by_entry_id(ws_history, del_id):
+                st.warning(f"Deleted entry {del_id}")
+            else:
+                st.error("Could not delete entry")
 
 # ------------------ Main ------------------
 def main():
@@ -297,22 +208,19 @@ def main():
     client = get_gs_client()
     sh = open_spreadsheet(client)
     ws_config, ws_history = ensure_worksheets(sh)
+
     cfg = read_config(ws_config)
 
     st.sidebar.header("Navigation")
-    mode = st.sidebar.radio("Mode", ["User", "Admin"])
-
-    if mode == "Admin":
+    mode = st.sidebar.radio("Mode", ["User","Admin"])
+    if mode=="Admin":
         pw = st.text_input("Admin Password", type="password")
-        if pw == "admin123":
-            admin_ui(cfg, ws_config)
+        if pw=="admin123":
+            admin_ui(cfg, ws_config, ws_history)
         else:
-            st.info("Enter the correct admin password to manage templates.")
+            st.info("Enter correct admin password")
     else:
         user_ui(cfg, ws_history)
 
-if __name__ == "__main__":
+if __name__=="__main__":
     main()
-
-
-
