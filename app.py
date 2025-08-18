@@ -193,9 +193,9 @@ def admin_ui(cfg: dict, ws_config):
         st.info("No products yet. Create one above.")
 
 # ------------------ User UI ------------------
-def user_ui(_ws_config, _ws_history):
+def user_ui(_ws_config, _ws_history):  # Changed parameter names to avoid confusion
     st.subheader("User • Enter Data")
-    cfg = read_config(_ws_config)  # Always read fresh config
+    cfg = read_config(_ws_config)  # Read fresh config
     
     if not cfg:
         st.info("No products available yet. Ask Admin to create a product in Admin mode.")
@@ -231,17 +231,16 @@ def user_ui(_ws_config, _ws_history):
             **values,
             "Comments": comments
         }
-        append_history(ws_history, record)
+        append_history(_ws_history, record)  # Use _ws_history parameter
         st.success(f"Saved! EntryID: {entry_id}")
 
-    # Display recent entries
-    df = get_recent_entries(ws_history, product)
+    # Display recent entries - FIXED: using _ws_history instead of ws_history
+    df = get_recent_entries(_ws_history, product)
     if not df.empty:
         st.subheader("Recent Entries (for this product)")
         st.dataframe(df, use_container_width=True, hide_index=True)
     else:
         st.caption("No entries yet.")
-
 
 # ------------------ Main ------------------
 def main():
@@ -251,8 +250,7 @@ def main():
     client = get_gs_client()
     sh = open_spreadsheet(client)
     ws_config, ws_history = ensure_worksheets(sh)
-    cfg = read_config(ws_config)
-
+    
     st.sidebar.header("Navigation")
     mode = st.sidebar.radio("Mode", ["User", "Admin"])
 
@@ -263,7 +261,7 @@ def main():
         else:
             st.info("Enter the correct admin password to manage templates.")
     else:
-        user_ui(ws_config, ws_history)
+        user_ui(ws_config, ws_history)  # Pass both worksheets to user_ui
 
 if __name__ == "__main__":
     main()
