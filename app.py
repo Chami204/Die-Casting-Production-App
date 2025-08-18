@@ -23,14 +23,37 @@ if 'cfg' not in st.session_state:
 
 # ------------------ Google Sheets ------------------
 def get_gs_client():
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive",
-    ]
-    creds = Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"], scopes=scopes
-    )
-    return gspread.authorize(creds)
+    try:
+        # Verify secrets exist
+        if 'gcp_service_account' not in st.secrets:
+            st.error("Google Service Account credentials not found in secrets.")
+            st.stop()
+            
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ]
+        
+        # Create credentials from secrets
+        creds_dict = {
+            "type": st.secrets["gcp_service_account"]["type"],
+            "project_id": st.secrets["gcp_service_account"]["project_id"],
+            "private_key_id": st.secrets["gcp_service_account"]["private_key_id"],
+            "private_key": st.secrets["gcp_service_account"]["private_key"].replace('\\n', '\n'),
+            "client_email": st.secrets["gcp_service_account"]["client_email"],
+            "client_id": st.secrets["gcp_service_account"]["client_id"],
+            "auth_uri": st.secrets["gcp_service_account"]["auth_uri"],
+            "token_uri": st.secrets["gcp_service_account"]["token_uri"],
+            "auth_provider_x509_cert_url": st.secrets["gcp_service_account"]["auth_provider_x509_cert_url"],
+            "client_x509_cert_url": st.secrets["gcp_service_account"]["client_x509_cert_url"]
+        }
+        
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        return gspread.authorize(creds)
+        
+    except Exception as e:
+        st.error(f"Failed to authenticate with Google Sheets: {str(e)}")
+        st.stop()
 
 def open_spreadsheet(client):
     name = st.secrets["gsheet"]["spreadsheet_name"]
@@ -195,3 +218,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
