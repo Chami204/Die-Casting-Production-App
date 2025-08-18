@@ -130,7 +130,8 @@ def flowchart_dot(cfg: dict) -> str:
 
 # ------------------ Admin UI ------------------
 def admin_ui(cfg: dict, ws_config):
-    st.subheader("Admin • Manage Products & Subtopics")
+    st.subheader("Manage Products & Subtopics")
+    cfg = read_config(_ws_config)
 
     # Create new product
     with st.expander("Create New Product"):
@@ -142,8 +143,9 @@ def admin_ui(cfg: dict, ws_config):
                 st.warning("That product already exists.")
             else:
                 cfg[new_product] = DEFAULT_SUBTOPICS.copy()
-                write_config(ws_config, cfg)
+                write_config(_ws_config, cfg)
                 st.success(f"Product '{new_product}' created with default subtopics.")
+                st.experimental_rerun()  # Force refresh
 
     # Edit existing product
     if cfg:
@@ -157,24 +159,27 @@ def admin_ui(cfg: dict, ws_config):
             if st.button("Add Subtopic to Product"):
                 if new_sub.strip():
                     cfg[prod].append(new_sub.strip())
-                    write_config(ws_config, cfg)
+                    write_config(_ws_config, cfg)
                     st.success(f"Added '{new_sub}' to {prod}.")
+                    st.experimental_rerun()  # Force refresh
 
             # Remove subtopics
             subs_to_remove = st.multiselect("Remove subtopics", cfg[prod])
             if st.button("Remove Selected Subtopics"):
                 if subs_to_remove:
                     cfg[prod] = [s for s in cfg[prod] if s not in subs_to_remove]
-                    write_config(ws_config, cfg)
+                    write_config(_ws_config, cfg)
                     st.warning(f"Removed: {', '.join(subs_to_remove)}")
+                    st.experimental_rerun()  # Force refresh
 
         # Delete product
         with st.expander("Delete Product"):
             prod_del = st.selectbox("Choose product to delete", sorted(cfg.keys()))
             if st.button("Delete Product Permanently"):
                 del cfg[prod_del]
-                write_config(ws_config, cfg)
+                write_config(_ws_config, cfg)
                 st.error(f"Deleted product '{prod_del}' and its subtopics.")
+                st.experimental_rerun()  # Force refresh
 
     st.divider()
     st.subheader("Current Flowchart Templates")
@@ -188,9 +193,10 @@ def admin_ui(cfg: dict, ws_config):
         st.info("No products yet. Create one above.")
 
 # ------------------ User UI ------------------
-# ------------------ User UI ------------------
-def user_ui(cfg: dict, ws_history):
+def user_ui(_ws_config, _ws_history):
     st.subheader("User • Enter Data")
+    cfg = read_config(_ws_config)  # Always read fresh config
+    
     if not cfg:
         st.info("No products available yet. Ask Admin to create a product in Admin mode.")
         return
@@ -253,11 +259,12 @@ def main():
     if mode == "Admin":
         pw = st.text_input("Admin Password", type="password")
         if pw == "admin123":
-            admin_ui(cfg, ws_config)
+            admin_ui(ws_config)
         else:
             st.info("Enter the correct admin password to manage templates.")
     else:
-        user_ui(cfg, ws_history)
+        user_ui(ws_config, ws_history)
 
 if __name__ == "__main__":
     main()
+
