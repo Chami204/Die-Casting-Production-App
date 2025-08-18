@@ -175,7 +175,7 @@ def user_ui(ws_config, ws_history):
         }
         ws_history.append_row(list(record.values()))
         st.success(f"Saved! EntryID: {entry_id}")
-        st.experimental_rerun()
+        st.rerun()
 
     df = get_recent_entries(ws_history, product)
     if not df.empty:
@@ -209,3 +209,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
