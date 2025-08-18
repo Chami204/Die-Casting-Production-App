@@ -26,7 +26,7 @@ def get_gs_client():
 
 def open_spreadsheet(client):
     # Spreadsheet name from secrets
-    name = st.secrets["gsheet"]["spreadsheet_name"]
+    name = st.secrets["gsheet"]["FlowApp_Data"]
     return client.open(name)
 
 
@@ -267,7 +267,7 @@ def main():
 
     if mode == "Admin":
         pw = st.text_input("Admin Password", type="password")
-        if pw == st.secrets["security"]["admin_password"]:
+        if pw == st.secrets["security"]["admin123"]:
             admin_ui(cfg, ws_config)
         else:
             st.info("Enter the correct admin password to manage templates.")
@@ -276,5 +276,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
