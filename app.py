@@ -231,6 +231,10 @@ def admin_ui(ws_config):
 def user_ui(ws_config, ws_history):
     st.subheader("Enter Data")
     
+    # Manual refresh button
+    if st.button("🔄 Refresh Data"):
+        st.rerun()
+
     # Auto-refresh config to get latest changes from admin
     refresh_config_if_needed(ws_config)
     
@@ -285,9 +289,6 @@ def user_ui(ws_config, ws_history):
     else:
         st.caption("No entries yet for this product.")
     
-    # Manual refresh button
-    if st.button("🔄 Refresh Data"):
-        st.rerun()
 
 # ------------------ Main ------------------
 def main():
@@ -321,3 +322,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
