@@ -4,10 +4,12 @@ import uuid
 from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
+import pytz
 
 # ------------------ Settings ------------------
-APP_TITLE = "Die Casting Production App"
+APP_TITLE = "Die Casting Production"
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+SRI_LANKA_TZ = pytz.timezone('Asia/Colombo')
 DEFAULT_SUBTOPICS = [
     "Input number of pcs",
     "Input time",
@@ -20,6 +22,19 @@ DEFAULT_SUBTOPICS = [
 # ------------------ Initialize Session State ------------------
 if 'cfg' not in st.session_state:
     st.session_state.cfg = {}
+if 'last_config_update' not in st.session_state:
+    st.session_state.last_config_update = None
+
+# ------------------ Helper Functions ------------------
+def get_sri_lanka_time():
+    """Get current time in Sri Lanka timezone"""
+    return datetime.now(SRI_LANKA_TZ).strftime(TIME_FORMAT)
+
+def should_refresh_config():
+    """Check if config should be refreshed (every 5 seconds)"""
+    if st.session_state.last_config_update is None:
+        return True
+    return (datetime.now() - st.session_state.last_config_update).total_seconds() > 5
 
 # ------------------ Google Sheets ------------------
 def get_gs_client():
@@ -83,24 +98,41 @@ def ensure_worksheets(sh):
 
 # ------------------ Config helpers ------------------
 def read_config(ws_config):
-    values = ws_config.get_all_records()
-    cfg = {}
-    for row in values:
-        p = str(row.get("Product", "")).strip()
-        s = str(row.get("Subtopic", "")).strip()
-        if not p or not s:
-            continue
-        cfg.setdefault(p, []).append(s)
-    return cfg
+    try:
+        values = ws_config.get_all_records()
+        cfg = {}
+        for row in values:
+            p = str(row.get("Product", "")).strip()
+            s = str(row.get("Subtopic", "")).strip()
+            if not p or not s:
+                continue
+            cfg.setdefault(p, []).append(s)
+        return cfg
+    except Exception as e:
+        st.error(f"Error reading config: {str(e)}")
+        return {}
 
 def write_config(ws_config, cfg: dict):
-    rows = [["Product", "Subtopic"]]
-    for product, subs in cfg.items():
-        for s in subs:
-            rows.append([product, s])
-    ws_config.clear()
-    ws_config.update("A1", rows)
-    ws_config.freeze(rows=1)
+    try:
+        rows = [["Product", "Subtopic"]]
+        for product, subs in cfg.items():
+            for s in subs:
+                rows.append([product, s])
+        ws_config.clear()
+        ws_config.update("A1", rows)
+        ws_config.freeze(rows=1)
+        return True
+    except Exception as e:
+        st.error(f"Error writing config: {str(e)}")
+        return False
+
+def refresh_config_if_needed(ws_config):
+    """Refresh config from Google Sheets if needed"""
+    if should_refresh_config():
+        new_cfg = read_config(ws_config)
+        if new_cfg != st.session_state.cfg:
+            st.session_state.cfg = new_cfg
+        st.session_state.last_config_update = datetime.now()
 
 # ------------------ History helpers ------------------
 def ensure_history_headers(ws_history, product):
@@ -133,7 +165,10 @@ def get_recent_entries(ws_history, product: str, limit: int = 50) -> pd.DataFram
 
 # ------------------ Admin UI ------------------
 def admin_ui(ws_config):
-    st.subheader("Admin • Manage Products & Subtopics")
+    st.subheader("Manage Products & Subtopics")
+    
+    # Auto-refresh config to see changes from other devices
+    refresh_config_if_needed(ws_config)
 
     # Create new product
     with st.expander("Create New Product"):
@@ -145,9 +180,9 @@ def admin_ui(ws_config):
                 st.warning("That product already exists.")
             else:
                 st.session_state.cfg[new_product] = DEFAULT_SUBTOPICS.copy()
-                write_config(ws_config, st.session_state.cfg)
-                st.success(f"Product '{new_product}' created with default subtopics.")
-                st.rerun()
+                if write_config(ws_config, st.session_state.cfg):
+                    st.success(f"Product '{new_product}' created with default subtopics.")
+                    st.rerun()
 
     # Edit existing product
     if st.session_state.cfg:
@@ -161,35 +196,44 @@ def admin_ui(ws_config):
             if st.button("Add Subtopic to Product"):
                 if new_sub.strip():
                     st.session_state.cfg[prod].append(new_sub.strip())
-                    write_config(ws_config, st.session_state.cfg)
-                    st.success(f"Added '{new_sub}' to {prod}.")
-                    st.rerun()
+                    if write_config(ws_config, st.session_state.cfg):
+                        st.success(f"Added '{new_sub}' to {prod}.")
+                        st.rerun()
 
             # Remove subtopics
             subs_to_remove = st.multiselect("Remove subtopics", st.session_state.cfg[prod], key="remove_subtopics")
             if st.button("Remove Selected Subtopics"):
                 if subs_to_remove:
                     st.session_state.cfg[prod] = [s for s in st.session_state.cfg[prod] if s not in subs_to_remove]
-                    write_config(ws_config, st.session_state.cfg)
-                    st.warning(f"Removed: {', '.join(subs_to_remove)}")
-                    st.rerun()
+                    if write_config(ws_config, st.session_state.cfg):
+                        st.warning(f"Removed: {', '.join(subs_to_remove)}")
+                        st.rerun()
 
         # Delete product
         with st.expander("Delete Product"):
             prod_del = st.selectbox("Choose product to delete", sorted(st.session_state.cfg.keys()), key="delete_product")
             if st.button("Delete Product Permanently"):
                 del st.session_state.cfg[prod_del]
-                write_config(ws_config, st.session_state.cfg)
-                st.error(f"Deleted product '{prod_del}' and its subtopics.")
-                st.rerun()
+                if write_config(ws_config, st.session_state.cfg):
+                    st.error(f"Deleted product '{prod_del}' and its subtopics.")
+                    st.rerun()
 
     st.divider()
     st.subheader("Current Products Configuration")
     st.json(st.session_state.cfg)
+    
+    # Manual refresh button
+    if st.button("🔄 Refresh Configuration"):
+        st.session_state.last_config_update = None
+        st.rerun()
 
 # ------------------ User UI ------------------
-def user_ui(ws_history):
-    st.subheader("User • Enter Data")
+def user_ui(ws_config, ws_history):
+    st.subheader("Enter Data")
+    
+    # Auto-refresh config to get latest changes from admin
+    refresh_config_if_needed(ws_config)
+    
     if not st.session_state.cfg:
         st.info("No products available yet. Ask Admin to create a product in Admin mode.")
         return
@@ -205,7 +249,7 @@ def user_ui(ws_history):
         if "number" in subtopic.lower() or "num" in subtopic.lower() or "rejects" in subtopic.lower():
             values[subtopic] = st.number_input(subtopic, min_value=0, step=1, key=f"num_{subtopic}")
         elif "time" in subtopic.lower():
-            values[subtopic] = st.text_input(subtopic, value=datetime.now().strftime(TIME_FORMAT), key=f"time_{subtopic}")
+            values[subtopic] = st.text_input(subtopic, value=get_sri_lanka_time(), key=f"time_{subtopic}")
         else:
             values[subtopic] = st.text_input(subtopic, key=f"text_{subtopic}")
     
@@ -223,7 +267,7 @@ def user_ui(ws_history):
                 entry_id = uuid.uuid4().hex
                 record = {
                     "EntryID": entry_id,
-                    "Timestamp": datetime.now().strftime(TIME_FORMAT),
+                    "Timestamp": get_sri_lanka_time(),
                     "Product": product,
                     **values,
                     "Comments": comments
@@ -240,6 +284,10 @@ def user_ui(ws_history):
         st.dataframe(df, use_container_width=True, hide_index=True)
     else:
         st.caption("No entries yet for this product.")
+    
+    # Manual refresh button
+    if st.button("🔄 Refresh Data"):
+        st.rerun()
 
 # ------------------ Main ------------------
 def main():
@@ -254,6 +302,7 @@ def main():
         # Read config from Google Sheets at startup
         if not st.session_state.cfg:
             st.session_state.cfg = read_config(ws_config)
+            st.session_state.last_config_update = datetime.now()
 
         st.sidebar.header("Navigation")
         mode = st.sidebar.radio("Mode", ["User", "Admin"], key="mode_selector")
@@ -265,7 +314,7 @@ def main():
             elif pw:
                 st.warning("Incorrect admin password")
         else:
-            user_ui(ws_history)
+            user_ui(ws_config, ws_history)
 
     except Exception as e:
         st.error(f"Application error: {str(e)}")
