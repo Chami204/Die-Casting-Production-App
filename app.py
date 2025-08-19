@@ -20,8 +20,6 @@ DEFAULT_SUBTOPICS = [
 # ------------------ Initialize Session State ------------------
 if 'cfg' not in st.session_state:
     st.session_state.cfg = {}
-if 'initialized' not in st.session_state:
-    st.session_state.initialized = False
 
 # ------------------ Google Sheets ------------------
 def get_gs_client():
@@ -63,21 +61,48 @@ def open_spreadsheet(client):
         st.stop()
 
 def ensure_worksheets(sh):
+    # Config sheet
+    try:
+        ws_config = sh.worksheet("Config")
+    except gspread.WorksheetNotFound:
+        ws_config = sh.add_worksheet(title="Config", rows=1000, cols=2)
+        rows = [["Product", "Subtopic"]]
+        ws_config.update("A1", rows)
+        ws_config.freeze(rows=1)
+
+    # History sheet
     try:
         ws_history = sh.worksheet("History")
-        # Initialize headers if empty
-        if not ws_history.row_values(1):
-            headers = ["EntryID", "Timestamp", "Product", "Comments"] + DEFAULT_SUBTOPICS
-            ws_history.update("A1", [headers])
-            ws_history.freeze(rows=1)
     except gspread.WorksheetNotFound:
         ws_history = sh.add_worksheet(title="History", rows=2000, cols=50)
         headers = ["EntryID", "Timestamp", "Product", "Comments"] + DEFAULT_SUBTOPICS
         ws_history.update("A1", [headers])
         ws_history.freeze(rows=1)
-    return ws_history
 
-# ------------------ History Helpers ------------------
+    return ws_config, ws_history
+
+# ------------------ Config helpers ------------------
+def read_config(ws_config):
+    values = ws_config.get_all_records()
+    cfg = {}
+    for row in values:
+        p = str(row.get("Product", "")).strip()
+        s = str(row.get("Subtopic", "")).strip()
+        if not p or not s:
+            continue
+        cfg.setdefault(p, []).append(s)
+    return cfg
+
+def write_config(ws_config, cfg: dict):
+    rows = [["Product", "Subtopic"]]
+    for product, subs in cfg.items():
+        for s in subs:
+            rows.append([product, s])
+    ws_config.clear()
+    ws_config.update("A1", rows)
+    ws_config.freeze(rows=1)
+
+# ------------------ History helpers ------------------
 def ensure_history_headers(ws_history, product):
     current_subtopics = st.session_state.cfg.get(product, DEFAULT_SUBTOPICS.copy())
     headers = ws_history.row_values(1)
@@ -107,7 +132,7 @@ def get_recent_entries(ws_history, product: str, limit: int = 50) -> pd.DataFram
         return pd.DataFrame()
 
 # ------------------ Admin UI ------------------
-def admin_ui():
+def admin_ui(ws_config):
     st.subheader("Admin • Manage Products & Subtopics")
 
     # Create new product
@@ -120,6 +145,7 @@ def admin_ui():
                 st.warning("That product already exists.")
             else:
                 st.session_state.cfg[new_product] = DEFAULT_SUBTOPICS.copy()
+                write_config(ws_config, st.session_state.cfg)
                 st.success(f"Product '{new_product}' created with default subtopics.")
                 st.rerun()
 
@@ -135,6 +161,7 @@ def admin_ui():
             if st.button("Add Subtopic to Product"):
                 if new_sub.strip():
                     st.session_state.cfg[prod].append(new_sub.strip())
+                    write_config(ws_config, st.session_state.cfg)
                     st.success(f"Added '{new_sub}' to {prod}.")
                     st.rerun()
 
@@ -143,6 +170,7 @@ def admin_ui():
             if st.button("Remove Selected Subtopics"):
                 if subs_to_remove:
                     st.session_state.cfg[prod] = [s for s in st.session_state.cfg[prod] if s not in subs_to_remove]
+                    write_config(ws_config, st.session_state.cfg)
                     st.warning(f"Removed: {', '.join(subs_to_remove)}")
                     st.rerun()
 
@@ -151,6 +179,7 @@ def admin_ui():
             prod_del = st.selectbox("Choose product to delete", sorted(st.session_state.cfg.keys()), key="delete_product")
             if st.button("Delete Product Permanently"):
                 del st.session_state.cfg[prod_del]
+                write_config(ws_config, st.session_state.cfg)
                 st.error(f"Deleted product '{prod_del}' and its subtopics.")
                 st.rerun()
 
@@ -220,7 +249,11 @@ def main():
     try:
         client = get_gs_client()
         sh = open_spreadsheet(client)
-        ws_history = ensure_worksheets(sh)
+        ws_config, ws_history = ensure_worksheets(sh)
+        
+        # Read config from Google Sheets at startup
+        if not st.session_state.cfg:
+            st.session_state.cfg = read_config(ws_config)
 
         st.sidebar.header("Navigation")
         mode = st.sidebar.radio("Mode", ["User", "Admin"], key="mode_selector")
@@ -228,8 +261,8 @@ def main():
         if mode == "Admin":
             pw = st.text_input("Admin Password", type="password", key="admin_pw")
             if pw == "admin123":
-                admin_ui()
-            elif pw:  # Only show if password was attempted
+                admin_ui(ws_config)
+            elif pw:
                 st.warning("Incorrect admin password")
         else:
             user_ui(ws_history)
