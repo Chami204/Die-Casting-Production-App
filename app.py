@@ -91,7 +91,7 @@ def ensure_worksheets(sh):
     try:
         ws_history = sh.worksheet("History")
     except gspread.WorksheetNotFound:
-        ws_history = sh.add_worksheet(title("History", rows=2000, cols=50)
+        ws_history = sh.add_worksheet(title("History", rows=2000, cols=50))
         headers = ["EntryID", "Timestamp", "Product", "Comments"] + DEFAULT_SUBTOPICS
         ws_history.update("A1", [headers])
         ws_history.freeze(rows=1)
@@ -454,3 +454,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
