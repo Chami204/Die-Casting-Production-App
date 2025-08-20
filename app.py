@@ -24,6 +24,8 @@ if 'cfg' not in st.session_state:
     st.session_state.cfg = {}
 if 'last_config_update' not in st.session_state:
     st.session_state.last_config_update = None
+if 'editing_entry' not in st.session_state:
+    st.session_state.editing_entry = None
 
 # ------------------ Helper Functions ------------------
 def get_sri_lanka_time():
@@ -89,7 +91,7 @@ def ensure_worksheets(sh):
     try:
         ws_history = sh.worksheet("History")
     except gspread.WorksheetNotFound:
-        ws_history = sh.add_worksheet(title="History", rows=2000, cols=50)
+        ws_history = sh.add_worksheet(title("History", rows=2000, cols=50)
         headers = ["EntryID", "Timestamp", "Product", "Comments"] + DEFAULT_SUBTOPICS
         ws_history.update("A1", [headers])
         ws_history.freeze(rows=1)
@@ -162,6 +164,58 @@ def get_recent_entries(ws_history, product: str, limit: int = 50) -> pd.DataFram
     except Exception as e:
         st.error(f"Error loading history: {str(e)}")
         return pd.DataFrame()
+
+def update_entry(ws_history, entry_id: str, updated_data: dict):
+    """Update an existing entry in the history sheet"""
+    try:
+        # Find the row with the matching EntryID
+        cell = ws_history.find(entry_id)
+        if not cell:
+            st.error("Entry not found.")
+            return False
+        
+        # Get current headers
+        headers = ws_history.row_values(1)
+        
+        # Prepare the updated row
+        updated_row = []
+        for header in headers:
+            if header in updated_data:
+                updated_row.append(updated_data[header])
+            else:
+                # Get the existing value for this header
+                existing_value = ws_history.cell(cell.row, headers.index(header) + 1).value
+                updated_row.append(existing_value)
+        
+        # Update the row
+        ws_history.update(f"A{cell.row}", [updated_row], value_input_option="USER_ENTERED")
+        return True
+        
+    except Exception as e:
+        st.error(f"Error updating entry: {str(e)}")
+        return False
+
+def find_entry_by_id(ws_history, entry_id: str) -> dict:
+    """Find an entry by its ID and return as dictionary"""
+    try:
+        cell = ws_history.find(entry_id)
+        if not cell:
+            return None
+        
+        headers = ws_history.row_values(1)
+        row_values = ws_history.row_values(cell.row)
+        
+        entry_data = {}
+        for i, header in enumerate(headers):
+            if i < len(row_values):
+                entry_data[header] = row_values[i]
+            else:
+                entry_data[header] = ""
+        
+        return entry_data
+    except Exception as e:
+        st.error(f"Error finding entry: {str(e)}")
+        return None
 
 # ------------------ Admin UI ------------------
 def admin_ui(ws_config):
@@ -281,14 +335,92 @@ def user_ui(ws_config, ws_history):
             except Exception as e:
                 st.error(f"Error saving data: {str(e)}")
 
-    # Display recent entries
+    # Display recent entries with edit functionality
     df = get_recent_entries(ws_history, product)
     if not df.empty:
         st.subheader("Recent Entries (for this product)")
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        
+        # Edit functionality
+        if st.session_state.editing_entry:
+            entry_to_edit = st.session_state.editing_entry
+            st.write(f"**Editing Entry ID:** {entry_to_edit}")
+            
+            # Get the entry data
+            entry_data = find_entry_by_id(ws_history, entry_to_edit)
+            if entry_data:
+                edited_values = {}
+                
+                # Create editable fields
+                for subtopic in current_subtopics:
+                    if subtopic in entry_data:
+                        if "number" in subtopic.lower() or "num" in subtopic.lower() or "rejects" in subtopic.lower():
+                            edited_values[subtopic] = st.number_input(
+                                f"{subtopic}", 
+                                value=int(entry_data[subtopic]) if entry_data[subtopic] and entry_data[subtopic].isdigit() else 0,
+                                min_value=0,
+                                step=1,
+                                key=f"edit_{subtopic}_{entry_to_edit}"
+                            )
+                        elif "time" in subtopic.lower():
+                            edited_values[subtopic] = st.text_input(
+                                f"{subtopic}", 
+                                value=get_sri_lanka_time(),  # Always use current time for edits
+                                key=f"edit_{subtopic}_{entry_to_edit}"
+                            )
+                        else:
+                            edited_values[subtopic] = st.text_input(
+                                f"{subtopic}", 
+                                value=entry_data[subtopic],
+                                key=f"edit_{subtopic}_{entry_to_edit}"
+                            )
+                
+                # Comments field (editable)
+                edited_comments = st.text_area(
+                    "Comments", 
+                    value=entry_data.get("Comments", ""),
+                    key=f"edit_comments_{entry_to_edit}"
+                )
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("💾 Save Changes"):
+                        # Prepare updated data
+                        updated_data = {
+                            **edited_values,
+                            "Comments": f"{edited_comments}\n\n[Edited at {get_sri_lanka_time()}]",
+                            "Timestamp": get_sri_lanka_time()  # Update timestamp
+                        }
+                        
+                        if update_entry(ws_history, entry_to_edit, updated_data):
+                            st.success("Entry updated successfully!")
+                            st.session_state.editing_entry = None
+                            st.rerun()
+                
+                with col2:
+                    if st.button("❌ Cancel Edit"):
+                        st.session_state.editing_entry = None
+                        st.rerun()
+            else:
+                st.error("Entry not found.")
+                st.session_state.editing_entry = None
+        
+        # Display entries with edit buttons
+        for _, row in df.iterrows():
+            with st.expander(f"Entry {row.get('EntryID', 'N/A')} - {row.get('Timestamp', 'N/A')}"):
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.write(f"**Product:** {row.get('Product', 'N/A')}")
+                    for subtopic in current_subtopics:
+                        if subtopic in row:
+                            st.write(f"**{subtopic}:** {row[subtopic]}")
+                    st.write(f"**Comments:** {row.get('Comments', '')}")
+                
+                with col2:
+                    if st.button("✏️ Edit", key=f"edit_{row.get('EntryID', '')}"):
+                        st.session_state.editing_entry = row.get('EntryID')
+                        st.rerun()
     else:
         st.caption("No entries yet for this product.")
-    
 
 # ------------------ Main ------------------
 def main():
@@ -322,4 +454,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
