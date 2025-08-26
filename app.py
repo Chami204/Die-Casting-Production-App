@@ -272,12 +272,11 @@ def production_records_ui(ws_config, ws_production):
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        machine = st.selectbox("Machine", ["M1", "M2"], key="production_machine")
-    with col2:
         shift = st.selectbox("Shift", ["Day", "Night"], key="production_shift")
-    with col3:
+    with col2:
         team = st.selectbox("Team", ["A", "B", "C"], key="production_team")
-   
+    with col3:
+        machine = st.selectbox("Machine", ["M1", "M2"], key="production_machine")
     
     product = st.selectbox("Select Product", sorted(st.session_state.cfg.keys()), key="production_product")
     current_subtopics = st.session_state.cfg.get(product, DEFAULT_SUBTOPICS.copy())
@@ -287,7 +286,7 @@ def production_records_ui(ws_config, ws_production):
     
     # Generate dynamic form fields
     for subtopic in current_subtopics:
-        if "number" in subtopic.lower() or "num" in subtopic.lower() or "rejects" in subtopic.lower():
+        if "quantity" in subtopic.lower() or "qty" in subtopic.lower() or "count" in subtopic.lower():
             values[subtopic] = st.number_input(subtopic, min_value=0, step=1, key=f"num_{subtopic}")
         elif "time" in subtopic.lower():
             values[subtopic] = st.text_input(subtopic, value=get_sri_lanka_time(), key=f"time_{subtopic}")
@@ -298,7 +297,7 @@ def production_records_ui(ws_config, ws_production):
 
     if st.button("Submit Production Record", key="submit_production_btn"):
         # Validate required numeric fields
-        required_fields = [st for st in current_subtopics if "number" in st.lower() or "num" in st.lower()]
+        required_fields = [st for st in current_subtopics if "quantity" in st.lower() or "qty" in st.lower() or "count" in st.lower()]
         missing_fields = [f for f in required_fields if not values.get(f, 0)]
         
         if missing_fields:
@@ -359,12 +358,11 @@ def quality_records_ui(ws_config, ws_production):
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        machine = st.selectbox("Machine", ["M1", "M2"], key="quality_machine")
-    with col2:
         shift = st.selectbox("Shift", ["Day", "Night"], key="quality_shift")
-    with col3:
+    with col2:
         team = st.selectbox("Team", ["A", "B", "C"], key="quality_team")
-    
+    with col3:
+        machine = st.selectbox("Machine", ["M1", "M2"], key="quality_machine")
     
     product = st.selectbox("Select Item", sorted(st.session_state.cfg.keys()), key="quality_product")
     
@@ -411,11 +409,11 @@ def downtime_records_ui(ws_downtime):
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        machine = st.selectbox("Machine", ["M1", "M2"], key="downtime_machine")
-    with col2:
         shift = st.selectbox("Shift", ["Day", "Night"], key="downtime_shift")
-    with col3:
+    with col2:
         team = st.selectbox("Team", ["A", "B", "C"], key="downtime_team")
+    with col3:
+        machine = st.selectbox("Machine", ["M1", "M2"], key="downtime_machine")
     
     planned_item = st.text_input("Planned Item", key="planned_item")
     downtime_reason = st.selectbox(
@@ -510,7 +508,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
