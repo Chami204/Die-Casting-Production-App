@@ -451,6 +451,9 @@ def main_ui(ws_config, ws_production, ws_downtime):
     "Select Section",
     ["Production Records", "Machine Downtime Records", "Quality Team Records"]
 )
+    elif section == "Machine Downtime Records":
+        downtime_records_ui(ws_downtime)
+    elif section == "Quality Team Records":
         quality_records_ui(ws_config, ws_production)
 
 
