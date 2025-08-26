@@ -96,7 +96,7 @@ def ensure_worksheets(sh):
         ws_production = sh.worksheet("Production_Quality_Records")
     except gspread.WorksheetNotFound:
         ws_production = sh.add_worksheet(title="Production_Quality_Records", rows=2000, cols=50)
-        headers = ["RecordType", "EntryID", "Timestamp", "Shift", "Team", "Product", "Comments"] + DEFAULT_SUBTOPICS
+        headers = ["RecordType", "EntryID", "Timestamp", "Shift", "Team", "Machine", "Product", "Comments"] + DEFAULT_SUBTOPICS
         ws_production.update("A1", [headers])
         ws_production.freeze(rows=1)
 
@@ -105,7 +105,7 @@ def ensure_worksheets(sh):
         ws_downtime = sh.worksheet("Machine_Downtime_Records")
     except gspread.WorksheetNotFound:
         ws_downtime = sh.add_worksheet(title="Machine_Downtime_Records", rows=2000, cols=20)
-        headers = ["EntryID", "Timestamp", "Shift", "Team", "Planned_Item", "Downtime_Reason", "Other_Comments", "Duration_Min"]
+        headers = ["EntryID", "Timestamp", "Shift", "Team", "Machine", "Planned_Item", "Downtime_Reason", "Other_Comments", "Duration_Min"]
         ws_downtime.update("A1", [headers])
         ws_downtime.freeze(rows=1)
 
@@ -153,7 +153,7 @@ def refresh_config_if_needed(ws_config):
 def ensure_production_headers(ws_production, product):
     current_subtopics = st.session_state.cfg.get(product, DEFAULT_SUBTOPICS.copy())
     headers = ws_production.row_values(1)
-    needed_headers = ["RecordType", "EntryID", "Timestamp", "Shift", "Team", "Product", "Comments"] + current_subtopics
+    needed_headers = ["RecordType", "EntryID", "Timestamp", "Shift", "Team", "Machine", "Product", "Comments"] + current_subtopics
     
     if set(headers) != set(needed_headers):
         ws_production.update("A1", [needed_headers])
@@ -259,21 +259,23 @@ def admin_ui(ws_config):
         st.rerun()
 
 # ------------------ Production Records UI ------------------
-def production_records_ui(ws_config, ws_production):  # Added ws_config parameter
+def production_records_ui(ws_config, ws_production):
     st.subheader("Production Records")
     
     # Auto-refresh config to get latest changes from admin
-    refresh_config_if_needed(ws_config)  # Now ws_config is defined
+    refresh_config_if_needed(ws_config)
     
     if not st.session_state.cfg:
         st.info("No products available yet. Ask Admin to create a product in Admin mode.")
         return
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         shift = st.selectbox("Shift", ["Day", "Night"], key="production_shift")
     with col2:
         team = st.selectbox("Team", ["A", "B", "C"], key="production_team")
+    with col3:
+        machine = st.selectbox("Machine", ["M1", "M2"], key="production_machine")
     
     product = st.selectbox("Select Product", sorted(st.session_state.cfg.keys()), key="production_product")
     current_subtopics = st.session_state.cfg.get(product, DEFAULT_SUBTOPICS.copy())
@@ -308,6 +310,7 @@ def production_records_ui(ws_config, ws_production):  # Added ws_config paramete
                     "Timestamp": get_sri_lanka_time(),
                     "Shift": shift,
                     "Team": team,
+                    "Machine": machine,
                     "Product": product,
                     **values,
                     "Comments": comments
@@ -326,14 +329,14 @@ def production_records_ui(ws_config, ws_production):  # Added ws_config paramete
         st.caption("No production entries yet for this product.")
 
 # ------------------ Quality Records UI ------------------
-def quality_records_ui(ws_config, ws_production):  # Added ws_config parameter
+def quality_records_ui(ws_config, ws_production):
     st.subheader("Quality Team Records")
     
     # Password protection
     if not st.session_state.quality_password_entered:
         pw = st.text_input("Quality Team Password", type="password", key="quality_pw")
         if st.button("Authenticate", key="quality_auth_btn"):
-            if pw == "quality123":  # Default password, should be changed in production
+            if pw == "quality123":
                 st.session_state.quality_password_entered = True
                 st.rerun()
             else:
@@ -346,19 +349,21 @@ def quality_records_ui(ws_config, ws_production):  # Added ws_config parameter
         st.rerun()
     
     # Auto-refresh config to get latest changes from admin
-    refresh_config_if_needed(ws_config)  # Now ws_config is defined
+    refresh_config_if_needed(ws_config)
     
     if not st.session_state.cfg:
         st.info("No products available yet. Ask Admin to create a product in Admin mode.")
         return
 
-    product = st.selectbox("Select Item", sorted(st.session_state.cfg.keys()), key="quality_product")
-    
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         shift = st.selectbox("Shift", ["Day", "Night"], key="quality_shift")
     with col2:
         team = st.selectbox("Team", ["A", "B", "C"], key="quality_team")
+    with col3:
+        machine = st.selectbox("Machine", ["M1", "M2"], key="quality_machine")
+    
+    product = st.selectbox("Select Item", sorted(st.session_state.cfg.keys()), key="quality_product")
     
     reject_count = st.number_input(
         "Reject Point 02 – QC inspection after production by casting machines", 
@@ -378,6 +383,7 @@ def quality_records_ui(ws_config, ws_production):  # Added ws_config parameter
                 "Timestamp": get_sri_lanka_time(),
                 "Shift": shift,
                 "Team": team,
+                "Machine": machine,
                 "Product": product,
                 "Number of rejects": reject_count,
                 "Comments": comments
@@ -400,11 +406,13 @@ def quality_records_ui(ws_config, ws_production):  # Added ws_config parameter
 def downtime_records_ui(ws_downtime):
     st.subheader("Machine Downtime Records")
     
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         shift = st.selectbox("Shift", ["Day", "Night"], key="downtime_shift")
     with col2:
         team = st.selectbox("Team", ["A", "B", "C"], key="downtime_team")
+    with col3:
+        machine = st.selectbox("Machine", ["M1", "M2"], key="downtime_machine")
     
     planned_item = st.text_input("Planned Item", key="planned_item")
     downtime_reason = st.selectbox(
@@ -423,6 +431,7 @@ def downtime_records_ui(ws_downtime):
                 "Timestamp": get_sri_lanka_time(),
                 "Shift": shift,
                 "Team": team,
+                "Machine": machine,
                 "Planned_Item": planned_item,
                 "Downtime_Reason": downtime_reason,
                 "Other_Comments": other_comments,
@@ -458,11 +467,11 @@ def main_ui(ws_config, ws_production, ws_downtime):
     
     # Display the selected section
     if section == "Production Records":
-        production_records_ui(ws_config, ws_production)  # Added ws_config parameter
+        production_records_ui(ws_config, ws_production)
     elif section == "Machine Downtime Records":
         downtime_records_ui(ws_downtime)
     elif section == "Quality Team Records":
-        quality_records_ui(ws_config, ws_production)  # Added ws_config parameter
+        quality_records_ui(ws_config, ws_production)
 
 # ------------------ Main ------------------
 def main():
@@ -484,7 +493,7 @@ def main():
         
         if is_admin:
             pw = st.sidebar.text_input("Admin Password", type="password", key="admin_pw")
-            if pw == "admin123":  # Default password, should be changed in production
+            if pw == "admin123":
                 admin_ui(ws_config)
             elif pw:
                 st.sidebar.warning("Incorrect admin password")
@@ -498,4 +507,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
