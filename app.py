@@ -11,7 +11,7 @@ APP_TITLE = "Die Casting Production"
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 SRI_LANKA_TZ = pytz.timezone('Asia/Colombo')
 DEFAULT_SUBTOPICS = [
-    "Input number of pcs",
+    "Target Qty(",
     "Input time",
     "Output number of pcs",
     "Output time",
@@ -509,5 +509,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
