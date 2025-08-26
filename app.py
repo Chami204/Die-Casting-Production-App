@@ -271,11 +271,12 @@ def production_records_ui(ws_config, ws_production):
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        shift = st.selectbox("Shift", ["Day", "Night"], key="production_shift")
-    with col2:
-        team = st.selectbox("Team", ["A", "B", "C"], key="production_team")
-    with col3:
         machine = st.selectbox("Machine", ["M1", "M2"], key="production_machine")
+    with col2:
+        shift = st.selectbox("Shift", ["Day", "Night"], key="production_shift")
+    with col3:
+        team = st.selectbox("Team", ["A", "B", "C"], key="production_team")
+   
     
     product = st.selectbox("Select Product", sorted(st.session_state.cfg.keys()), key="production_product")
     current_subtopics = st.session_state.cfg.get(product, DEFAULT_SUBTOPICS.copy())
@@ -356,12 +357,13 @@ def quality_records_ui(ws_config, ws_production):
         return
 
     col1, col2, col3 = st.columns(3)
-    with col1:
-        shift = st.selectbox("Shift", ["Day", "Night"], key="quality_shift")
-    with col2:
-        team = st.selectbox("Team", ["A", "B", "C"], key="quality_team")
-    with col3:
+     with col1:
         machine = st.selectbox("Machine", ["M1", "M2"], key="quality_machine")
+    with col2:
+        shift = st.selectbox("Shift", ["Day", "Night"], key="quality_shift")
+    with col3:
+        team = st.selectbox("Team", ["A", "B", "C"], key="quality_team")
+    
     
     product = st.selectbox("Select Item", sorted(st.session_state.cfg.keys()), key="quality_product")
     
@@ -408,11 +410,11 @@ def downtime_records_ui(ws_downtime):
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        shift = st.selectbox("Shift", ["Day", "Night"], key="downtime_shift")
-    with col2:
-        team = st.selectbox("Team", ["A", "B", "C"], key="downtime_team")
-    with col3:
         machine = st.selectbox("Machine", ["M1", "M2"], key="downtime_machine")
+    with col2:
+        shift = st.selectbox("Shift", ["Day", "Night"], key="downtime_shift")
+    with col3:
+        team = st.selectbox("Team", ["A", "B", "C"], key="downtime_team")
     
     planned_item = st.text_input("Planned Item", key="planned_item")
     downtime_reason = st.selectbox(
@@ -507,3 +509,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
