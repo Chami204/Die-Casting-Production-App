@@ -26,6 +26,10 @@ if 'last_config_update' not in st.session_state:
     st.session_state.last_config_update = None
 if 'editing_entry' not in st.session_state:
     st.session_state.editing_entry = None
+if 'current_section' not in st.session_state:
+    st.session_state.current_section = "Production Records"
+if 'quality_password_entered' not in st.session_state:
+    st.session_state.quality_password_entered = False
 
 # ------------------ Helper Functions ------------------
 def get_sri_lanka_time():
@@ -87,16 +91,25 @@ def ensure_worksheets(sh):
         ws_config.update("A1", rows)
         ws_config.freeze(rows=1)
 
-    # History sheet
+    # Production & Quality sheet
     try:
-        ws_history = sh.worksheet("History")
+        ws_production = sh.worksheet("Production_Quality_Records")
     except gspread.WorksheetNotFound:
-        ws_history = sh.add_worksheet(title("History", rows=2000, cols=50))
-        headers = ["EntryID", "Timestamp", "Product", "Comments"] + DEFAULT_SUBTOPICS
-        ws_history.update("A1", [headers])
-        ws_history.freeze(rows=1)
+        ws_production = sh.add_worksheet(title="Production_Quality_Records", rows=2000, cols=50)
+        headers = ["RecordType", "EntryID", "Timestamp", "Shift", "Team", "Product", "Comments"] + DEFAULT_SUBTOPICS
+        ws_production.update("A1", [headers])
+        ws_production.freeze(rows=1)
 
-    return ws_config, ws_history
+    # Downtime sheet
+    try:
+        ws_downtime = sh.worksheet("Machine_Downtime_Records")
+    except gspread.WorksheetNotFound:
+        ws_downtime = sh.add_worksheet(title="Machine_Downtime_Records", rows=2000, cols=20)
+        headers = ["EntryID", "Timestamp", "Shift", "Team", "Planned_Item", "Downtime_Reason", "Other_Comments", "Duration_Min"]
+        ws_downtime.update("A1", [headers])
+        ws_downtime.freeze(rows=1)
+
+    return ws_config, ws_production, ws_downtime
 
 # ------------------ Config helpers ------------------
 def read_config(ws_config):
@@ -137,24 +150,29 @@ def refresh_config_if_needed(ws_config):
         st.session_state.last_config_update = datetime.now()
 
 # ------------------ History helpers ------------------
-def ensure_history_headers(ws_history, product):
+def ensure_production_headers(ws_production, product):
     current_subtopics = st.session_state.cfg.get(product, DEFAULT_SUBTOPICS.copy())
-    headers = ws_history.row_values(1)
-    needed_headers = ["EntryID", "Timestamp", "Product", "Comments"] + current_subtopics
+    headers = ws_production.row_values(1)
+    needed_headers = ["RecordType", "EntryID", "Timestamp", "Shift", "Team", "Product", "Comments"] + current_subtopics
     
     if set(headers) != set(needed_headers):
-        ws_history.update("A1", [needed_headers])
-        ws_history.freeze(rows=1)
+        ws_production.update("A1", [needed_headers])
+        ws_production.freeze(rows=1)
     return needed_headers
 
-def append_history(ws_history, record: dict):
-    headers = ensure_history_headers(ws_history, record["Product"])
+def append_production_record(ws_production, record: dict):
+    headers = ensure_production_headers(ws_production, record["Product"])
     row = [record.get(h, "") for h in headers]
-    ws_history.append_row(row, value_input_option="USER_ENTERED")
+    ws_production.append_row(row, value_input_option="USER_ENTERED")
 
-def get_recent_entries(ws_history, product: str, limit: int = 50) -> pd.DataFrame:
+def append_downtime_record(ws_downtime, record: dict):
+    headers = ws_downtime.row_values(1)
+    row = [record.get(h, "") for h in headers]
+    ws_downtime.append_row(row, value_input_option="USER_ENTERED")
+
+def get_recent_production_entries(ws_production, product: str, limit: int = 50) -> pd.DataFrame:
     try:
-        values = ws_history.get_all_records()
+        values = ws_production.get_all_records()
         if not values:
             return pd.DataFrame()
         df = pd.DataFrame(values)
@@ -165,57 +183,16 @@ def get_recent_entries(ws_history, product: str, limit: int = 50) -> pd.DataFram
         st.error(f"Error loading history: {str(e)}")
         return pd.DataFrame()
 
-def update_entry(ws_history, entry_id: str, updated_data: dict):
-    """Update an existing entry in the history sheet"""
+def get_recent_downtime_entries(ws_downtime, limit: int = 50) -> pd.DataFrame:
     try:
-        # Find the row with the matching EntryID
-        cell = ws_history.find(entry_id)
-        if not cell:
-            st.error("Entry not found.")
-            return False
-        
-        # Get current headers
-        headers = ws_history.row_values(1)
-        
-        # Prepare the updated row
-        updated_row = []
-        for header in headers:
-            if header in updated_data:
-                updated_row.append(updated_data[header])
-            else:
-                # Get the existing value for this header
-                existing_value = ws_history.cell(cell.row, headers.index(header) + 1).value
-                updated_row.append(existing_value)
-        
-        # Update the row
-        ws_history.update(f"A{cell.row}", [updated_row], value_input_option="USER_ENTERED")
-        return True
-        
+        values = ws_downtime.get_all_records()
+        if not values:
+            return pd.DataFrame()
+        df = pd.DataFrame(values)
+        return df.sort_values(by="Timestamp", ascending=False).head(limit)
     except Exception as e:
-        st.error(f"Error updating entry: {str(e)}")
-        return False
-
-def find_entry_by_id(ws_history, entry_id: str) -> dict:
-    """Find an entry by its ID and return as dictionary"""
-    try:
-        cell = ws_history.find(entry_id)
-        if not cell:
-            return None
-        
-        headers = ws_history.row_values(1)
-        row_values = ws_history.row_values(cell.row)
-        
-        entry_data = {}
-        for i, header in enumerate(headers):
-            if i < len(row_values):
-                entry_data[header] = row_values[i]
-            else:
-                entry_data[header] = ""
-        
-        return entry_data
-    except Exception as e:
-        st.error(f"Error finding entry: {str(e)}")
-        return None
+        st.error(f"Error loading downtime history: {str(e)}")
+        return pd.DataFrame()
 
 # ------------------ Admin UI ------------------
 def admin_ui(ws_config):
@@ -281,14 +258,10 @@ def admin_ui(ws_config):
         st.session_state.last_config_update = None
         st.rerun()
 
-# ------------------ User UI ------------------
-def user_ui(ws_config, ws_history):
-    st.subheader("Enter Data")
+# ------------------ Production Records UI ------------------
+def production_records_ui(ws_production):
+    st.subheader("Production Records")
     
-    # Manual refresh button
-    if st.button("🔄 Refresh Data"):
-        st.rerun()
-
     # Auto-refresh config to get latest changes from admin
     refresh_config_if_needed(ws_config)
     
@@ -296,7 +269,13 @@ def user_ui(ws_config, ws_history):
         st.info("No products available yet. Ask Admin to create a product in Admin mode.")
         return
 
-    product = st.selectbox("Select Main Product", sorted(st.session_state.cfg.keys()), key="user_product")
+    col1, col2 = st.columns(2)
+    with col1:
+        shift = st.selectbox("Shift", ["Day", "Night"], key="production_shift")
+    with col2:
+        team = st.selectbox("Team", ["A", "B", "C"], key="production_team")
+    
+    product = st.selectbox("Select Product", sorted(st.session_state.cfg.keys()), key="production_product")
     current_subtopics = st.session_state.cfg.get(product, DEFAULT_SUBTOPICS.copy())
     
     st.write("Fill **all fields** below:")
@@ -311,9 +290,9 @@ def user_ui(ws_config, ws_history):
         else:
             values[subtopic] = st.text_input(subtopic, key=f"text_{subtopic}")
     
-    comments = st.text_area("Comments", key="comments")
+    comments = st.text_area("Comments", key="production_comments")
 
-    if st.button("Submit", key="submit_btn"):
+    if st.button("Submit Production Record", key="submit_production_btn"):
         # Validate required numeric fields
         required_fields = [st for st in current_subtopics if "number" in st.lower() or "num" in st.lower()]
         missing_fields = [f for f in required_fields if not values.get(f, 0)]
@@ -324,134 +303,198 @@ def user_ui(ws_config, ws_history):
             try:
                 entry_id = uuid.uuid4().hex
                 record = {
+                    "RecordType": "Production",
                     "EntryID": entry_id,
                     "Timestamp": get_sri_lanka_time(),
+                    "Shift": shift,
+                    "Team": team,
                     "Product": product,
                     **values,
                     "Comments": comments
                 }
-                append_history(ws_history, record)
-                st.success(f"Saved! EntryID: {entry_id}")
+                append_production_record(ws_production, record)
+                st.success(f"Production Record Saved! EntryID: {entry_id}")
             except Exception as e:
                 st.error(f"Error saving data: {str(e)}")
 
-    # Display recent entries with edit functionality
-    df = get_recent_entries(ws_history, product)
+    # Display recent production entries
+    df = get_recent_production_entries(ws_production, product)
     if not df.empty:
-        st.subheader("Recent Entries (for this product)")
-        
-        # Edit functionality
-        if st.session_state.editing_entry:
-            entry_to_edit = st.session_state.editing_entry
-            st.write(f"**Editing Entry ID:** {entry_to_edit}")
-            
-            # Get the entry data
-            entry_data = find_entry_by_id(ws_history, entry_to_edit)
-            if entry_data:
-                edited_values = {}
-                
-                # Create editable fields
-                for subtopic in current_subtopics:
-                    if subtopic in entry_data:
-                        if "number" in subtopic.lower() or "num" in subtopic.lower() or "rejects" in subtopic.lower():
-                            edited_values[subtopic] = st.number_input(
-                                f"{subtopic}", 
-                                value=int(entry_data[subtopic]) if entry_data[subtopic] and entry_data[subtopic].isdigit() else 0,
-                                min_value=0,
-                                step=1,
-                                key=f"edit_{subtopic}_{entry_to_edit}"
-                            )
-                        elif "time" in subtopic.lower():
-                            edited_values[subtopic] = st.text_input(
-                                f"{subtopic}", 
-                                value=get_sri_lanka_time(),  # Always use current time for edits
-                                key=f"edit_{subtopic}_{entry_to_edit}"
-                            )
-                        else:
-                            edited_values[subtopic] = st.text_input(
-                                f"{subtopic}", 
-                                value=entry_data[subtopic],
-                                key=f"edit_{subtopic}_{entry_to_edit}"
-                            )
-                
-                # Comments field (editable)
-                edited_comments = st.text_area(
-                    "Comments", 
-                    value=entry_data.get("Comments", ""),
-                    key=f"edit_comments_{entry_to_edit}"
-                )
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("💾 Save Changes"):
-                        # Prepare updated data
-                        updated_data = {
-                            **edited_values,
-                            "Comments": f"{edited_comments}\n\n[Edited at {get_sri_lanka_time()}]",
-                            "Timestamp": get_sri_lanka_time()  # Update timestamp
-                        }
-                        
-                        if update_entry(ws_history, entry_to_edit, updated_data):
-                            st.success("Entry updated successfully!")
-                            st.session_state.editing_entry = None
-                            st.rerun()
-                
-                with col2:
-                    if st.button("❌ Cancel Edit"):
-                        st.session_state.editing_entry = None
-                        st.rerun()
-            else:
-                st.error("Entry not found.")
-                st.session_state.editing_entry = None
-        
-        # Display entries with edit buttons
-        for _, row in df.iterrows():
-            with st.expander(f"Entry {row.get('EntryID', 'N/A')} - {row.get('Timestamp', 'N/A')}"):
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    st.write(f"**Product:** {row.get('Product', 'N/A')}")
-                    for subtopic in current_subtopics:
-                        if subtopic in row:
-                            st.write(f"**{subtopic}:** {row[subtopic]}")
-                    st.write(f"**Comments:** {row.get('Comments', '')}")
-                
-                with col2:
-                    if st.button("✏️ Edit", key=f"edit_{row.get('EntryID', '')}"):
-                        st.session_state.editing_entry = row.get('EntryID')
-                        st.rerun()
+        st.subheader("Recent Production Entries")
+        st.dataframe(df)
     else:
-        st.caption("No entries yet for this product.")
+        st.caption("No production entries yet for this product.")
+
+# ------------------ Quality Records UI ------------------
+def quality_records_ui(ws_production):
+    st.subheader("Quality Team Records")
+    
+    # Password protection
+    if not st.session_state.quality_password_entered:
+        pw = st.text_input("Quality Team Password", type="password", key="quality_pw")
+        if st.button("Authenticate", key="quality_auth_btn"):
+            if pw == "quality123":  # Default password, should be changed in production
+                st.session_state.quality_password_entered = True
+                st.rerun()
+            else:
+                st.error("Incorrect password")
+        return
+    
+    st.success("Authenticated as Quality Team")
+    if st.button("Logout", key="quality_logout_btn"):
+        st.session_state.quality_password_entered = False
+        st.rerun()
+    
+    # Auto-refresh config to get latest changes from admin
+    refresh_config_if_needed(ws_config)
+    
+    if not st.session_state.cfg:
+        st.info("No products available yet. Ask Admin to create a product in Admin mode.")
+        return
+
+    product = st.selectbox("Select Item", sorted(st.session_state.cfg.keys()), key="quality_product")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        shift = st.selectbox("Shift", ["Day", "Night"], key="quality_shift")
+    with col2:
+        team = st.selectbox("Team", ["A", "B", "C"], key="quality_team")
+    
+    reject_count = st.number_input(
+        "Reject Point 02 – QC inspection after production by casting machines", 
+        min_value=0, 
+        step=1,
+        key="reject_count"
+    )
+    
+    comments = st.text_area("Comments", key="quality_comments")
+
+    if st.button("Submit Quality Record", key="submit_quality_btn"):
+        try:
+            entry_id = uuid.uuid4().hex
+            record = {
+                "RecordType": "Quality",
+                "EntryID": entry_id,
+                "Timestamp": get_sri_lanka_time(),
+                "Shift": shift,
+                "Team": team,
+                "Product": product,
+                "Number of rejects": reject_count,
+                "Comments": comments
+            }
+            append_production_record(ws_production, record)
+            st.success(f"Quality Record Saved! EntryID: {entry_id}")
+        except Exception as e:
+            st.error(f"Error saving data: {str(e)}")
+
+    # Display recent quality entries
+    df = get_recent_production_entries(ws_production, product)
+    if not df.empty:
+        df = df[df["RecordType"] == "Quality"]
+        st.subheader("Recent Quality Entries")
+        st.dataframe(df)
+    else:
+        st.caption("No quality entries yet for this product.")
+
+# ------------------ Downtime Records UI ------------------
+def downtime_records_ui(ws_downtime):
+    st.subheader("Machine Downtime Records")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        shift = st.selectbox("Shift", ["Day", "Night"], key="downtime_shift")
+    with col2:
+        team = st.selectbox("Team", ["A", "B", "C"], key="downtime_team")
+    
+    planned_item = st.text_input("Planned Item", key="planned_item")
+    downtime_reason = st.selectbox(
+        "Downtime Reason", 
+        ["Mechanical Failure", "Electrical Issue", "Maintenance", "Material Shortage", "Other"],
+        key="downtime_reason"
+    )
+    other_comments = st.text_area("Other Comments", key="downtime_comments")
+    duration_min = st.number_input("Duration (Min)", min_value=1, step=1, key="duration_min")
+
+    if st.button("Submit Downtime Record", key="submit_downtime_btn"):
+        try:
+            entry_id = uuid.uuid4().hex
+            record = {
+                "EntryID": entry_id,
+                "Timestamp": get_sri_lanka_time(),
+                "Shift": shift,
+                "Team": team,
+                "Planned_Item": planned_item,
+                "Downtime_Reason": downtime_reason,
+                "Other_Comments": other_comments,
+                "Duration_Min": duration_min
+            }
+            append_downtime_record(ws_downtime, record)
+            st.success(f"Downtime Record Saved! EntryID: {entry_id}")
+        except Exception as e:
+            st.error(f"Error saving data: {str(e)}")
+
+    # Display recent downtime entries
+    df = get_recent_downtime_entries(ws_downtime)
+    if not df.empty:
+        st.subheader("Recent Downtime Entries")
+        st.dataframe(df)
+    else:
+        st.caption("No downtime entries yet.")
+
+# ------------------ Main UI ------------------
+def main_ui(ws_config, ws_production, ws_downtime):
+    st.title(APP_TITLE)
+    
+    # Section selection
+    st.sidebar.header("Navigation")
+    section = st.sidebar.radio(
+        "Select Section", 
+        ["Production Records", "Machine Downtime Records", "Quality Team Records"],
+        key="section_selector"
+    )
+    
+    # Show current section in top right corner
+    st.sidebar.markdown(f"**Current Mode:** {section}")
+    
+    # Display the selected section
+    if section == "Production Records":
+        production_records_ui(ws_production)
+    elif section == "Machine Downtime Records":
+        downtime_records_ui(ws_downtime)
+    elif section == "Quality Team Records":
+        quality_records_ui(ws_production)
 
 # ------------------ Main ------------------
 def main():
     st.set_page_config(page_title=APP_TITLE, page_icon="🗂️", layout="wide")
-    st.title(APP_TITLE)
-
+    
     try:
         client = get_gs_client()
         sh = open_spreadsheet(client)
-        ws_config, ws_history = ensure_worksheets(sh)
+        ws_config, ws_production, ws_downtime = ensure_worksheets(sh)
         
         # Read config from Google Sheets at startup
         if not st.session_state.cfg:
             st.session_state.cfg = read_config(ws_config)
             st.session_state.last_config_update = datetime.now()
 
-        st.sidebar.header("Navigation")
-        mode = st.sidebar.radio("Mode", ["User", "Admin"], key="mode_selector")
-
-        if mode == "Admin":
-            pw = st.text_input("Admin Password", type="password", key="admin_pw")
-            if pw == "admin123":
+        # Check if user is admin
+        st.sidebar.header("Admin Access")
+        is_admin = st.sidebar.checkbox("Admin Mode", key="admin_mode")
+        
+        if is_admin:
+            pw = st.sidebar.text_input("Admin Password", type="password", key="admin_pw")
+            if pw == "admin123":  # Default password, should be changed in production
                 admin_ui(ws_config)
             elif pw:
-                st.warning("Incorrect admin password")
+                st.sidebar.warning("Incorrect admin password")
+            else:
+                main_ui(ws_config, ws_production, ws_downtime)
         else:
-            user_ui(ws_config, ws_history)
+            main_ui(ws_config, ws_production, ws_downtime)
 
     except Exception as e:
         st.error(f"Application error: {str(e)}")
 
 if __name__ == "__main__":
     main()
-
