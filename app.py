@@ -450,10 +450,10 @@ def main_ui(ws_config, ws_production, ws_downtime):
     section = st.sidebar.radio(
         "Select Section", 
         ["Production Records", "Machine Downtime
-    elif section == "Machine Downtime Records":
-        downtime_records_ui(ws_downtime)
-    elif section == "Quality Team Records":
-        quality_records_ui(ws_config, ws_production)
+        elif section == "Machine Downtime Records":
+            downtime_records_ui(ws_downtime)
+        elif section == "Quality Team Records":
+            quality_records_ui(ws_config, ws_production)
 
 
 # ------------------ Run App ------------------
@@ -467,3 +467,4 @@ def run_app():
 
 if __name__ == "__main__":
     run_app()
+
