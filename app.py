@@ -259,11 +259,11 @@ def admin_ui(ws_config):
         st.rerun()
 
 # ------------------ Production Records UI ------------------
-def production_records_ui(ws_production):
+def production_records_ui(ws_config, ws_production):  # Added ws_config parameter
     st.subheader("Production Records")
     
     # Auto-refresh config to get latest changes from admin
-    refresh_config_if_needed(ws_config)
+    refresh_config_if_needed(ws_config)  # Now ws_config is defined
     
     if not st.session_state.cfg:
         st.info("No products available yet. Ask Admin to create a product in Admin mode.")
@@ -326,7 +326,7 @@ def production_records_ui(ws_production):
         st.caption("No production entries yet for this product.")
 
 # ------------------ Quality Records UI ------------------
-def quality_records_ui(ws_production):
+def quality_records_ui(ws_config, ws_production):  # Added ws_config parameter
     st.subheader("Quality Team Records")
     
     # Password protection
@@ -346,7 +346,7 @@ def quality_records_ui(ws_production):
         st.rerun()
     
     # Auto-refresh config to get latest changes from admin
-    refresh_config_if_needed(ws_config)
+    refresh_config_if_needed(ws_config)  # Now ws_config is defined
     
     if not st.session_state.cfg:
         st.info("No products available yet. Ask Admin to create a product in Admin mode.")
@@ -458,11 +458,11 @@ def main_ui(ws_config, ws_production, ws_downtime):
     
     # Display the selected section
     if section == "Production Records":
-        production_records_ui(ws_production)
+        production_records_ui(ws_config, ws_production)  # Added ws_config parameter
     elif section == "Machine Downtime Records":
         downtime_records_ui(ws_downtime)
     elif section == "Quality Team Records":
-        quality_records_ui(ws_production)
+        quality_records_ui(ws_config, ws_production)  # Added ws_config parameter
 
 # ------------------ Main ------------------
 def main():
@@ -498,3 +498,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
