@@ -5,6 +5,8 @@ from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 import pytz
+import time
+import cachetools
 
 # ------------------ Settings ------------------
 APP_TITLE = "Die Casting Production"
@@ -20,6 +22,10 @@ DEFAULT_SUBTOPICS = [
     "Output time"
 ]
 
+# ------------------ Cache Setup ------------------
+# Use TTLCache to cache data for 30 seconds
+cache = cachetools.TTLCache(maxsize=100, ttl=30)
+
 # ------------------ Initialize Session State ------------------
 if 'cfg' not in st.session_state:
     st.session_state.cfg = {}
@@ -31,6 +37,12 @@ if 'current_section' not in st.session_state:
     st.session_state.current_section = "Production Records"
 if 'quality_password_entered' not in st.session_state:
     st.session_state.quality_password_entered = False
+if 'gs_client' not in st.session_state:
+    st.session_state.gs_client = None
+if 'spreadsheet' not in st.session_state:
+    st.session_state.spreadsheet = None
+if 'worksheets' not in st.session_state:
+    st.session_state.worksheets = {}
 
 # ------------------ Helper Functions ------------------
 def get_sri_lanka_time():
@@ -38,12 +50,13 @@ def get_sri_lanka_time():
     return datetime.now(SRI_LANKA_TZ).strftime(TIME_FORMAT)
 
 def should_refresh_config():
-    """Check if config should be refreshed (every 5 seconds)"""
+    """Check if config should be refreshed (every 30 seconds)"""
     if st.session_state.last_config_update is None:
         return True
-    return (datetime.now() - st.session_state.last_config_update).total_seconds() > 5
+    return (datetime.now() - st.session_state.last_config_update).total_seconds() > 30
 
-# ------------------ Google Sheets ------------------
+# ------------------ Cached Google Sheets Functions ------------------
+@st.cache_resource(show_spinner=False)
 def get_gs_client():
     try:
         if 'gcp_service_account' not in st.secrets:
@@ -74,48 +87,51 @@ def get_gs_client():
         st.error(f"Failed to authenticate with Google Sheets: {str(e)}")
         st.stop()
 
-def open_spreadsheet(client):
+@st.cache_resource(show_spinner=False)
+def open_spreadsheet(_client):
     try:
         name = st.secrets["gsheet"]["spreadsheet_name"]
-        return client.open(name)
+        return _client.open(name)
     except Exception as e:
         st.error(f"Error opening spreadsheet: {str(e)}")
         st.stop()
 
-def ensure_worksheets(sh):
-    # Config sheet
+def get_worksheet(sheet_name):
+    """Get worksheet with caching"""
+    cache_key = f"worksheet_{sheet_name}"
+    if cache_key in cache:
+        return cache[cache_key]
+    
     try:
-        ws_config = sh.worksheet("Config")
+        worksheet = st.session_state.spreadsheet.worksheet(sheet_name)
+        cache[cache_key] = worksheet
+        return worksheet
     except gspread.WorksheetNotFound:
-        ws_config = sh.add_worksheet(title="Config", rows=1000, cols=2)
-        rows = [["Product", "Subtopic"]]
-        ws_config.update("A1", rows)
-        ws_config.freeze(rows=1)
+        # Create worksheet if it doesn't exist
+        if sheet_name == "Config":
+            worksheet = st.session_state.spreadsheet.add_worksheet(title="Config", rows=1000, cols=2)
+            rows = [["Product", "Subtopic"]]
+            worksheet.update("A1", rows)
+            worksheet.freeze(rows=1)
+        elif sheet_name == "Production_Quality_Records":
+            worksheet = st.session_state.spreadsheet.add_worksheet(title="Production_Quality_Records", rows=2000, cols=50)
+            headers = ["RecordType", "EntryID", "Timestamp", "Shift", "Team", "Machine", "Product", "Comments"] + DEFAULT_SUBTOPICS
+            worksheet.update("A1", [headers])
+            worksheet.freeze(rows=1)
+        elif sheet_name == "Machine_Downtime_Records":
+            worksheet = st.session_state.spreadsheet.add_worksheet(title="Machine_Downtime_Records", rows=2000, cols=20)
+            headers = ["EntryID", "Timestamp", "Shift", "Team", "Machine", "Planned_Item", "Downtime_Reason", "Other_Comments", "Duration_Min"]
+            worksheet.update("A1", [headers])
+            worksheet.freeze(rows=1)
+        
+        cache[cache_key] = worksheet
+        return worksheet
 
-    # Production & Quality sheet
+# ------------------ Optimized Config helpers ------------------
+@st.cache_data(ttl=30, show_spinner=False)
+def read_config_cached(_ws_config):
     try:
-        ws_production = sh.worksheet("Production_Quality_Records")
-    except gspread.WorksheetNotFound:
-        ws_production = sh.add_worksheet(title="Production_Quality_Records", rows=2000, cols=50)
-        headers = ["RecordType", "EntryID", "Timestamp", "Shift", "Team", "Machine", "Product", "Comments"] + DEFAULT_SUBTOPICS
-        ws_production.update("A1", [headers])
-        ws_production.freeze(rows=1)
-
-    # Downtime sheet
-    try:
-        ws_downtime = sh.worksheet("Machine_Downtime_Records")
-    except gspread.WorksheetNotFound:
-        ws_downtime = sh.add_worksheet(title="Machine_Downtime_Records", rows=2000, cols=20)
-        headers = ["EntryID", "Timestamp", "Shift", "Team", "Machine", "Planned_Item", "Downtime_Reason", "Other_Comments", "Duration_Min"]
-        ws_downtime.update("A1", [headers])
-        ws_downtime.freeze(rows=1)
-
-    return ws_config, ws_production, ws_downtime
-
-# ------------------ Config helpers ------------------
-def read_config(ws_config):
-    try:
-        values = ws_config.get_all_records()
+        values = _ws_config.get_all_records()
         cfg = {}
         for row in values:
             p = str(row.get("Product", "")).strip()
@@ -128,6 +144,9 @@ def read_config(ws_config):
         st.error(f"Error reading config: {str(e)}")
         return {}
 
+def read_config(ws_config):
+    return read_config_cached(ws_config)
+
 def write_config(ws_config, cfg: dict):
     try:
         rows = [["Product", "Subtopic"]]
@@ -137,6 +156,10 @@ def write_config(ws_config, cfg: dict):
         ws_config.clear()
         ws_config.update("A1", rows)
         ws_config.freeze(rows=1)
+        
+        # Clear cache after update
+        cache.clear()
+        st.cache_data.clear()
         return True
     except Exception as e:
         st.error(f"Error writing config: {str(e)}")
@@ -150,30 +173,12 @@ def refresh_config_if_needed(ws_config):
             st.session_state.cfg = new_cfg
         st.session_state.last_config_update = datetime.now()
 
-# ------------------ History helpers ------------------
-def ensure_production_headers(ws_production, product):
-    current_subtopics = st.session_state.cfg.get(product, DEFAULT_SUBTOPICS.copy())
-    headers = ws_production.row_values(1)
-    needed_headers = ["RecordType", "EntryID", "Timestamp", "Shift", "Team", "Machine", "Product", "Comments"] + current_subtopics
-    
-    if set(headers) != set(needed_headers):
-        ws_production.update("A1", [needed_headers])
-        ws_production.freeze(rows=1)
-    return needed_headers
-
-def append_production_record(ws_production, record: dict):
-    headers = ensure_production_headers(ws_production, record["Product"])
-    row = [record.get(h, "") for h in headers]
-    ws_production.append_row(row, value_input_option="USER_ENTERED")
-
-def append_downtime_record(ws_downtime, record: dict):
-    headers = ws_downtime.row_values(1)
-    row = [record.get(h, "") for h in headers]
-    ws_downtime.append_row(row, value_input_option="USER_ENTERED")
-
-def get_recent_production_entries(ws_production, product: str, limit: int = 50) -> pd.DataFrame:
+# ------------------ Optimized History helpers ------------------
+@st.cache_data(ttl=15, show_spinner=False)
+def get_recent_production_entries_cached(_ws_production, product: str, limit: int = 20):
     try:
-        values = ws_production.get_all_records()
+        # Only read necessary columns for better performance
+        values = _ws_production.get_all_records()
         if not values:
             return pd.DataFrame()
         df = pd.DataFrame(values)
@@ -184,9 +189,10 @@ def get_recent_production_entries(ws_production, product: str, limit: int = 50) 
         st.error(f"Error loading history: {str(e)}")
         return pd.DataFrame()
 
-def get_recent_downtime_entries(ws_downtime, limit: int = 50) -> pd.DataFrame:
+@st.cache_data(ttl=15, show_spinner=False)
+def get_recent_downtime_entries_cached(_ws_downtime, limit: int = 20):
     try:
-        values = ws_downtime.get_all_records()
+        values = _ws_downtime.get_all_records()
         if not values:
             return pd.DataFrame()
         df = pd.DataFrame(values)
@@ -194,6 +200,40 @@ def get_recent_downtime_entries(ws_downtime, limit: int = 50) -> pd.DataFrame:
     except Exception as e:
         st.error(f"Error loading downtime history: {str(e)}")
         return pd.DataFrame()
+
+def get_recent_production_entries(ws_production, product: str, limit: int = 20):
+    return get_recent_production_entries_cached(ws_production, product, limit)
+
+def get_recent_downtime_entries(ws_downtime, limit: int = 20):
+    return get_recent_downtime_entries_cached(ws_downtime, limit)
+
+def append_production_record(ws_production, record: dict):
+    try:
+        headers = ws_production.row_values(1)
+        row = [record.get(h, "") for h in headers]
+        ws_production.append_row(row, value_input_option="USER_ENTERED")
+        
+        # Clear cache after new entry
+        cache.clear()
+        st.cache_data.clear()
+        return True
+    except Exception as e:
+        st.error(f"Error saving production record: {str(e)}")
+        return False
+
+def append_downtime_record(ws_downtime, record: dict):
+    try:
+        headers = ws_downtime.row_values(1)
+        row = [record.get(h, "") for h in headers]
+        ws_downtime.append_row(row, value_input_option="USER_ENTERED")
+        
+        # Clear cache after new entry
+        cache.clear()
+        st.cache_data.clear()
+        return True
+    except Exception as e:
+        st.error(f"Error saving downtime record: {str(e)}")
+        return False
 
 # ------------------ Admin UI ------------------
 def admin_ui(ws_config):
@@ -257,6 +297,8 @@ def admin_ui(ws_config):
     # Manual refresh button
     if st.button("🔄 Refresh Configuration"):
         st.session_state.last_config_update = None
+        st.cache_data.clear()
+        cache.clear()
         st.rerun()
 
 # ------------------ Production Records UI ------------------
@@ -316,18 +358,19 @@ def production_records_ui(ws_config, ws_production):
                     **values,
                     "Comments": comments
                 }
-                append_production_record(ws_production, record)
-                st.success(f"Production Record Saved! EntryID: {entry_id}")
+                if append_production_record(ws_production, record):
+                    st.success(f"Production Record Saved! EntryID: {entry_id}")
             except Exception as e:
                 st.error(f"Error saving data: {str(e)}")
 
-    # Display recent production entries
-    df = get_recent_production_entries(ws_production, product)
-    if not df.empty:
-        st.subheader("Recent Production Entries")
-        st.dataframe(df)
-    else:
-        st.caption("No production entries yet for this product.")
+    # Display recent production entries with a spinner
+    with st.spinner("Loading recent entries..."):
+        df = get_recent_production_entries(ws_production, product)
+        if not df.empty:
+            st.subheader("Recent Production Entries")
+            st.dataframe(df, use_container_width=True)
+        else:
+            st.caption("No production entries yet for this product.")
 
 # ------------------ Quality Records UI ------------------
 def quality_records_ui(ws_config, ws_production):
@@ -389,19 +432,20 @@ def quality_records_ui(ws_config, ws_production):
                 "Number of rejects": reject_count,
                 "Comments": comments
             }
-            append_production_record(ws_production, record)
-            st.success(f"Quality Record Saved! EntryID: {entry_id}")
+            if append_production_record(ws_production, record):
+                st.success(f"Quality Record Saved! EntryID: {entry_id}")
         except Exception as e:
             st.error(f"Error saving data: {str(e)}")
 
-    # Display recent quality entries
-    df = get_recent_production_entries(ws_production, product)
-    if not df.empty:
-        df = df[df["RecordType"] == "Quality"]
-        st.subheader("Recent Quality Entries")
-        st.dataframe(df)
-    else:
-        st.caption("No quality entries yet for this product.")
+    # Display recent quality entries with a spinner
+    with st.spinner("Loading recent entries..."):
+        df = get_recent_production_entries(ws_production, product)
+        if not df.empty:
+            df = df[df["RecordType"] == "Quality"]
+            st.subheader("Recent Quality Entries")
+            st.dataframe(df, use_container_width=True)
+        else:
+            st.caption("No quality entries yet for this product.")
 
 # ------------------ Downtime Records UI ------------------
 def downtime_records_ui(ws_downtime):
@@ -438,18 +482,19 @@ def downtime_records_ui(ws_downtime):
                 "Other_Comments": other_comments,
                 "Duration_Min": duration_min
             }
-            append_downtime_record(ws_downtime, record)
-            st.success(f"Downtime Record Saved! EntryID: {entry_id}")
+            if append_downtime_record(ws_downtime, record):
+                st.success(f"Downtime Record Saved! EntryID: {entry_id}")
         except Exception as e:
             st.error(f"Error saving data: {str(e)}")
 
-    # Display recent downtime entries
-    df = get_recent_downtime_entries(ws_downtime)
-    if not df.empty:
-        st.subheader("Recent Downtime Entries")
-        st.dataframe(df)
-    else:
-        st.caption("No downtime entries yet.")
+    # Display recent downtime entries with a spinner
+    with st.spinner("Loading recent entries..."):
+        df = get_recent_downtime_entries(ws_downtime)
+        if not df.empty:
+            st.subheader("Recent Downtime Entries")
+            st.dataframe(df, use_container_width=True)
+        else:
+            st.caption("No downtime entries yet.")
 
 # ------------------ Main UI ------------------
 def main_ui(ws_config, ws_production, ws_downtime):
@@ -478,10 +523,17 @@ def main_ui(ws_config, ws_production, ws_downtime):
 def main():
     st.set_page_config(page_title=APP_TITLE, page_icon="🗂️", layout="wide")
     
+    # Initialize Google Sheets client only once
+    if st.session_state.gs_client is None:
+        with st.spinner("Connecting to Google Sheets..."):
+            st.session_state.gs_client = get_gs_client()
+            st.session_state.spreadsheet = open_spreadsheet(st.session_state.gs_client)
+    
     try:
-        client = get_gs_client()
-        sh = open_spreadsheet(client)
-        ws_config, ws_production, ws_downtime = ensure_worksheets(sh)
+        # Get worksheets
+        ws_config = get_worksheet("Config")
+        ws_production = get_worksheet("Production_Quality_Records")
+        ws_downtime = get_worksheet("Machine_Downtime_Records")
         
         # Read config from Google Sheets at startup
         if not st.session_state.cfg:
