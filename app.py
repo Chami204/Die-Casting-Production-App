@@ -453,9 +453,21 @@ def main_ui(ws_config, ws_production, ws_downtime):
     )
 
     if section == "Production Records":
-        production_records_ui(ws_production)
+        production_records_ui(ws_config, ws_production)
     elif section == "Machine Downtime Records":
         downtime_records_ui(ws_downtime)
     elif section == "Quality Team Records":
         quality_records_ui(ws_config, ws_production)
 
+
+# ------------------ Run App ------------------
+def run_app():
+    try:
+        ws_config, ws_production, ws_downtime = load_sheets()
+        main_ui(ws_config, ws_production, ws_downtime)
+    except Exception as e:
+        st.error(f"An error occurred: {e}")
+
+
+if __name__ == "__main__":
+    run_app()
