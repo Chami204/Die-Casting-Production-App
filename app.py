@@ -357,7 +357,7 @@ def quality_records_ui(ws_config, ws_production):
         return
 
     col1, col2, col3 = st.columns(3)
-     with col1:
+    with col1:
         machine = st.selectbox("Machine", ["M1", "M2"], key="quality_machine")
     with col2:
         shift = st.selectbox("Shift", ["Day", "Night"], key="quality_shift")
@@ -509,4 +509,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
