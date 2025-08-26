@@ -259,7 +259,7 @@ def admin_ui(ws_config):
         st.rerun()
 
 # ------------------ Production Records UI ------------------
-def production_records_ui(ws_production):
+def production_records_ui(ws_config, ws_production):
     st.subheader("Production Records")
     
     # Auto-refresh config to get latest changes from admin
@@ -326,7 +326,7 @@ def production_records_ui(ws_production):
         st.caption("No production entries yet for this product.")
 
 # ------------------ Quality Records UI ------------------
-def quality_records_ui(ws_production):
+def quality_records_ui(ws_config, ws_production):
     st.subheader("Quality Team Records")
     
     # Password protection
@@ -458,11 +458,11 @@ def main_ui(ws_config, ws_production, ws_downtime):
     
     # Display the selected section
     if section == "Production Records":
-        production_records_ui(ws_production)
+        production_records_ui(ws_config, ws_production)
     elif section == "Machine Downtime Records":
         downtime_records_ui(ws_downtime)
     elif section == "Quality Team Records":
-        quality_records_ui(ws_production)
+        quality_records_ui(ws_config, ws_production)
 
 # ------------------ Main ------------------
 def main():
@@ -498,3 +498,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
