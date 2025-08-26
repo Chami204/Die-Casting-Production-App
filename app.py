@@ -259,7 +259,7 @@ def admin_ui(ws_config):
         st.rerun()
 
 # ------------------ Production Records UI ------------------
-def production_records_ui(ws_config, ws_production):
+def production_records_ui(ws_production):
     st.subheader("Production Records")
     
     # Auto-refresh config to get latest changes from admin
@@ -326,7 +326,7 @@ def production_records_ui(ws_config, ws_production):
         st.caption("No production entries yet for this product.")
 
 # ------------------ Quality Records UI ------------------
-def quality_records_ui(ws_config, ws_production):
+def quality_records_ui(ws_production):
     st.subheader("Quality Team Records")
     
     # Password protection
@@ -448,26 +448,53 @@ def main_ui(ws_config, ws_production, ws_downtime):
     # Section selection
     st.sidebar.header("Navigation")
     section = st.sidebar.radio(
-        "Select Section",
-        ["Production Records", "Machine Downtime Records", "Quality Team Records"]
+        "Select Section", 
+        ["Production Records", "Machine Downtime Records", "Quality Team Records"],
+        key="section_selector"
     )
-
+    
+    # Show current section in top right corner
+    st.sidebar.markdown(f"**Current Mode:** {section}")
+    
+    # Display the selected section
     if section == "Production Records":
-        production_records_ui(ws_config, ws_production)
+        production_records_ui(ws_production)
     elif section == "Machine Downtime Records":
         downtime_records_ui(ws_downtime)
     elif section == "Quality Team Records":
-        quality_records_ui(ws_config, ws_production)
+        quality_records_ui(ws_production)
 
-
-# ------------------ Run App ------------------
-def run_app():
+# ------------------ Main ------------------
+def main():
+    st.set_page_config(page_title=APP_TITLE, page_icon="🗂️", layout="wide")
+    
     try:
-        ws_config, ws_production, ws_downtime = load_sheets()
-        main_ui(ws_config, ws_production, ws_downtime)
-    except Exception as e:
-        st.error(f"An error occurred: {e}")
+        client = get_gs_client()
+        sh = open_spreadsheet(client)
+        ws_config, ws_production, ws_downtime = ensure_worksheets(sh)
+        
+        # Read config from Google Sheets at startup
+        if not st.session_state.cfg:
+            st.session_state.cfg = read_config(ws_config)
+            st.session_state.last_config_update = datetime.now()
 
+        # Check if user is admin
+        st.sidebar.header("Admin Access")
+        is_admin = st.sidebar.checkbox("Admin Mode", key="admin_mode")
+        
+        if is_admin:
+            pw = st.sidebar.text_input("Admin Password", type="password", key="admin_pw")
+            if pw == "admin123":  # Default password, should be changed in production
+                admin_ui(ws_config)
+            elif pw:
+                st.sidebar.warning("Incorrect admin password")
+            else:
+                main_ui(ws_config, ws_production, ws_downtime)
+        else:
+            main_ui(ws_config, ws_production, ws_downtime)
+
+    except Exception as e:
+        st.error(f"Application error: {str(e)}")
 
 if __name__ == "__main__":
-    run_app()
+    main()
