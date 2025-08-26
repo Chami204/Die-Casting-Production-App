@@ -11,12 +11,13 @@ APP_TITLE = "Die Casting Production"
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 SRI_LANKA_TZ = pytz.timezone('Asia/Colombo')
 DEFAULT_SUBTOPICS = [
-    "Target Qty(",
+    "Target Quantity(Planned Shot Count - per Shift and Machine )",
     "Input time",
-    "Output number of pcs",
-    "Output time",
-    "Num of pcs to rework",
-    "Number of rejects"
+    "Actual Qty(Actual Shot Count - per shift and Machine)",
+    "Slow shot Count (Trial shots during production)",
+    "Reject Qty(Reject Point 01 - During production )",
+    "Approved Qty",
+    "Output time"
 ]
 
 # ------------------ Initialize Session State ------------------
@@ -509,6 +510,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
