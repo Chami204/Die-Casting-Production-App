@@ -29,6 +29,13 @@ DEFAULT_DOWNTIME_REASONS = [
     "Other"
 ]
 
+DEFAULT_PROCESS_STEPS = [
+    "Inspection",
+    "Testing",
+    "Final QC",
+    "Packaging"
+]
+
 DEFAULT_USER_CREDENTIALS = {
     "operator1": "password1",
     "operator2": "password2",
@@ -57,8 +64,12 @@ if 'spreadsheet' not in st.session_state:
     st.session_state.spreadsheet = None
 if 'downtime_reasons' not in st.session_state:
     st.session_state.downtime_reasons = DEFAULT_DOWNTIME_REASONS.copy()
+if 'process_steps' not in st.session_state:
+    st.session_state.process_steps = DEFAULT_PROCESS_STEPS.copy()
 if 'user_credentials' not in st.session_state:
     st.session_state.user_credentials = DEFAULT_USER_CREDENTIALS.copy()
+if 'signature_data' not in st.session_state:
+    st.session_state.signature_data = None
 
 # ------------------ Helper Functions ------------------
 def get_sri_lanka_time():
@@ -168,6 +179,14 @@ def get_worksheet(sheet_name):
             default_reasons = [[reason] for reason in DEFAULT_DOWNTIME_REASONS]
             worksheet.update("A2", default_reasons)
             worksheet.freeze(rows=1)
+        elif sheet_name == "Process_Steps":
+            worksheet = st.session_state.spreadsheet.add_worksheet(title="Process_Steps", rows=100, cols=1)
+            headers = ["Step"]
+            worksheet.update("A1", [headers])
+            # Add default process steps
+            default_steps = [[step] for step in DEFAULT_PROCESS_STEPS]
+            worksheet.update("A2", default_steps)
+            worksheet.freeze(rows=1)
         
         cache[cache_key] = worksheet
         return worksheet
@@ -214,6 +233,16 @@ def read_downtime_reasons_cached(_ws_reasons):
         st.error(f"Error reading downtime reasons: {str(e)}")
         return DEFAULT_DOWNTIME_REASONS.copy()
 
+@st.cache_data(ttl=30, show_spinner=False)
+def read_process_steps_cached(_ws_steps):
+    try:
+        values = _ws_steps.get_all_records()
+        steps = [str(row.get("Step", "")).strip() for row in values if str(row.get("Step", "")).strip()]
+        return steps if steps else DEFAULT_PROCESS_STEPS.copy()
+    except Exception as e:
+        st.error(f"Error reading process steps: {str(e)}")
+        return DEFAULT_PROCESS_STEPS.copy()
+
 def read_config(ws_config):
     return read_config_cached(ws_config)
 
@@ -222,6 +251,9 @@ def read_user_credentials(ws_credentials):
 
 def read_downtime_reasons(ws_reasons):
     return read_downtime_reasons_cached(ws_reasons)
+
+def read_process_steps(ws_steps):
+    return read_process_steps_cached(ws_steps)
 
 def write_config(ws_config, cfg: dict):
     try:
@@ -275,7 +307,24 @@ def write_downtime_reasons(ws_reasons, reasons: list):
         st.error(f"Error writing downtime reasons: {str(e)}")
         return False
 
-def refresh_config_if_needed(ws_config, ws_credentials, ws_reasons):
+def write_process_steps(ws_steps, steps: list):
+    try:
+        rows = [["Step"]]
+        for step in steps:
+            rows.append([step])
+        ws_steps.clear()
+        ws_steps.update("A1", rows)
+        ws_steps.freeze(rows=1)
+        
+        # Clear cache after update
+        cache.clear()
+        st.cache_data.clear()
+        return True
+    except Exception as e:
+        st.error(f"Error writing process steps: {str(e)}")
+        return False
+
+def refresh_config_if_needed(ws_config, ws_credentials, ws_reasons, ws_steps):
     """Refresh config from Google Sheets if needed"""
     if should_refresh_config():
         new_cfg = read_config(ws_config)
@@ -289,6 +338,10 @@ def refresh_config_if_needed(ws_config, ws_credentials, ws_reasons):
         new_reasons = read_downtime_reasons(ws_reasons)
         if new_reasons != st.session_state.downtime_reasons:
             st.session_state.downtime_reasons = new_reasons
+        
+        new_steps = read_process_steps(ws_steps)
+        if new_steps != st.session_state.process_steps:
+            st.session_state.process_steps = new_steps
         
         st.session_state.last_config_update = datetime.now()
 
@@ -384,17 +437,36 @@ def append_quality_record(ws_quality, record: dict):
         st.error(f"Error saving quality record: {str(e)}")
         return False
 
+# ------------------ Signature Canvas Component ------------------
+def signature_canvas():
+    st.markdown("""
+    <style>
+    .signature-container {
+        border: 2px dashed #ccc;
+        padding: 10px;
+        border-radius: 5px;
+        background-color: #f9f9f9;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("<div class='signature-container'>", unsafe_allow_html=True)
+    signature = st.text_input("Draw your signature in the box below or type it:", key="signature_input")
+    st.markdown("</div>", unsafe_allow_html=True)
+    
+    return signature
+
 # ------------------ Admin UI ------------------
-def admin_ui(ws_config, ws_credentials, ws_reasons):
+def admin_ui(ws_config, ws_credentials, ws_reasons, ws_steps):
     st.subheader("Admin Management Panel")
     
-    tabs = st.tabs(["Products & Subtopics", "User Credentials", "Downtime Reasons"])
+    tabs = st.tabs(["Products & Subtopics", "User Credentials", "Downtime Reasons", "Process Steps", "Quality Settings"])
     
     with tabs[0]:
         st.subheader("Manage Products & Subtopics")
         
         # Auto-refresh config to see changes from other devices
-        refresh_config_if_needed(ws_config, ws_credentials, ws_reasons)
+        refresh_config_if_needed(ws_config, ws_credentials, ws_reasons, ws_steps)
 
         # Create new product
         with st.expander("Create New Product"):
@@ -499,6 +571,39 @@ def admin_ui(ws_config, ws_credentials, ws_reasons):
                         st.warning(f"Removed reason: {reason_to_remove}")
                         st.rerun()
     
+    with tabs[3]:
+        st.subheader("Manage Process Steps")
+        
+        st.write("Current Process Steps:")
+        for step in st.session_state.process_steps:
+            st.write(f"- {step}")
+        
+        with st.expander("Add Process Step"):
+            new_step = st.text_input("New Process Step", key="new_step")
+            if st.button("Add Step"):
+                if new_step.strip() and new_step not in st.session_state.process_steps:
+                    st.session_state.process_steps.append(new_step.strip())
+                    if write_process_steps(ws_steps, st.session_state.process_steps):
+                        st.success(f"Added process step: {new_step}")
+                        st.rerun()
+        
+        with st.expander("Remove Process Step"):
+            step_to_remove = st.selectbox("Select step to remove", st.session_state.process_steps, key="remove_step")
+            if st.button("Remove Step"):
+                if step_to_remove in st.session_state.process_steps:
+                    st.session_state.process_steps.remove(step_to_remove)
+                    if write_process_steps(ws_steps, st.session_state.process_steps):
+                        st.warning(f"Removed step: {step_to_remove}")
+                        st.rerun()
+    
+    with tabs[4]:
+        st.subheader("Quality Team Records Settings")
+        st.info("All quality team record settings can be managed through the individual sections above.")
+        st.write("To modify quality-related settings:")
+        st.write("1. Use 'Products & Subtopics' to manage product-specific quality fields")
+        st.write("2. Use 'Process Steps' to manage available process steps")
+        st.write("3. All quality record fields are hardcoded in the application for consistency")
+    
     # Manual refresh button
     if st.button("🔄 Refresh All Configuration"):
         st.session_state.last_config_update = None
@@ -512,11 +617,8 @@ def production_records_ui(ws_config, ws_production, ws_credentials):
     
     # Password protection
     if not st.session_state.production_password_entered:
-        col1, col2 = st.columns(2)
-        with col1:
-            username = st.text_input("Username", key="production_username")
-        with col2:
-            password = st.text_input("Password", type="password", key="production_password")
+        username = st.selectbox("Username", list(st.session_state.user_credentials.keys()), key="production_username")
+        password = st.text_input("Password", type="password", key="production_password")
         
         if st.button("Login", key="production_login"):
             if username in st.session_state.user_credentials and st.session_state.user_credentials[username] == password:
@@ -524,7 +626,7 @@ def production_records_ui(ws_config, ws_production, ws_credentials):
                 st.session_state.current_user = username
                 st.rerun()
             else:
-                st.error("Invalid username or password")
+                st.error("Invalid password")
         return
     
     st.success(f"Logged in as: {st.session_state.current_user}")
@@ -534,7 +636,7 @@ def production_records_ui(ws_config, ws_production, ws_credentials):
         st.rerun()
     
     # Auto-refresh config to get latest changes from admin
-    refresh_config_if_needed(ws_config, ws_credentials, None)
+    refresh_config_if_needed(ws_config, ws_credentials, None, None)
     
     if not st.session_state.cfg:
         st.info("No products available yet. Ask Admin to create a product in Admin mode.")
@@ -661,7 +763,7 @@ def downtime_records_ui(ws_downtime, ws_config, ws_reasons):
             st.caption("No downtime entries yet.")
 
 # ------------------ Quality Records UI ------------------
-def quality_records_ui(ws_quality, ws_config):
+def quality_records_ui(ws_quality, ws_config, ws_steps):
     st.subheader("Quality Team Records")
     
     st.info("Sri Lanka Time: " + get_sri_lanka_time())
@@ -672,25 +774,42 @@ def quality_records_ui(ws_quality, ws_config):
 
     col1, col2 = st.columns(2)
     with col1:
-        process_step = st.selectbox("Process Step", ["Inspection", "Testing", "Final QC", "Packaging"], key="process_step")
+        process_step = st.selectbox("Process Step", st.session_state.process_steps, key="process_step")
     with col2:
         product = st.selectbox("Select Item", sorted(st.session_state.cfg.keys()), key="quality_product")
     
     total_lot_qty = st.number_input("Total Lot Qty", min_value=1, step=1, key="total_lot_qty")
     sample_size = st.number_input("Sample Size", min_value=1, step=1, key="sample_size")
-    aql_level = st.selectbox("AQL Level", ["I", "II", "III", "S-1", "S-2", "S-3", "S-4"], key="aql_level")
+    aql_level = st.text_input("AQL Level", key="aql_level")
     accept_reject = st.selectbox("Accept/Reject", ["Accept", "Reject"], key="accept_reject")
     defects_found = st.text_area("Defects Found", key="defects_found")
     results = st.selectbox("Results", ["Pass", "Fail"], key="results")
     quality_inspector = st.text_input("Quality Inspector", key="quality_inspector")
     etf_number = st.text_input("ETF Number", key="etf_number")
-    digital_signature = st.text_input("Digital Signature", key="digital_signature")
+    
+    # Digital signature canvas
+    st.subheader("Digital Signature")
+    digital_signature = signature_canvas()
+    
     comments = st.text_area("Comments", key="quality_comments")
 
     if st.button("Submit Quality Record", key="submit_quality_btn"):
         # Validate required fields
-        if not all([total_lot_qty, sample_size, aql_level, accept_reject, results, quality_inspector, etf_number, digital_signature]):
-            st.error("All fields except 'Defects Found' are required.")
+        required_fields = {
+            "Total Lot Qty": total_lot_qty,
+            "Sample Size": sample_size,
+            "AQL Level": aql_level,
+            "Accept/Reject": accept_reject,
+            "Results": results,
+            "Quality Inspector": quality_inspector,
+            "ETF Number": etf_number,
+            "Digital Signature": digital_signature
+        }
+        
+        missing_fields = [field for field, value in required_fields.items() if not value]
+        
+        if missing_fields:
+            st.error(f"Please fill in all required fields: {', '.join(missing_fields)}")
         else:
             try:
                 entry_id = uuid.uuid4().hex
@@ -725,7 +844,7 @@ def quality_records_ui(ws_quality, ws_config):
             st.caption("No quality entries yet for this product.")
 
 # ------------------ Main UI ------------------
-def main_ui(ws_config, ws_production, ws_downtime, ws_quality, ws_credentials, ws_reasons):
+def main_ui(ws_config, ws_production, ws_downtime, ws_quality, ws_credentials, ws_reasons, ws_steps):
     st.title(APP_TITLE)
     
     # Section selection
@@ -745,7 +864,7 @@ def main_ui(ws_config, ws_production, ws_downtime, ws_quality, ws_credentials, w
     elif section == "Machine Downtime Records":
         downtime_records_ui(ws_downtime, ws_config, ws_reasons)
     elif section == "Quality Team Records":
-        quality_records_ui(ws_quality, ws_config)
+        quality_records_ui(ws_quality, ws_config, ws_steps)
 
 # ------------------ Main ------------------
 def main():
@@ -765,6 +884,7 @@ def main():
         ws_quality = get_worksheet("Quality_Records")
         ws_credentials = get_worksheet("User_Credentials")
         ws_reasons = get_worksheet("Downtime_Reasons")
+        ws_steps = get_worksheet("Process_Steps")
         
         # Read config from Google Sheets at startup
         if not st.session_state.cfg:
@@ -776,6 +896,9 @@ def main():
         if not st.session_state.downtime_reasons:
             st.session_state.downtime_reasons = read_downtime_reasons(ws_reasons)
         
+        if not st.session_state.process_steps:
+            st.session_state.process_steps = read_process_steps(ws_steps)
+        
         st.session_state.last_config_update = datetime.now()
 
         # Check if user is admin
@@ -785,13 +908,13 @@ def main():
         if is_admin:
             pw = st.sidebar.text_input("Admin Password", type="password", key="admin_pw")
             if pw == "admin123":
-                admin_ui(ws_config, ws_credentials, ws_reasons)
+                admin_ui(ws_config, ws_credentials, ws_reasons, ws_steps)
             elif pw:
                 st.sidebar.warning("Incorrect admin password")
             else:
-                main_ui(ws_config, ws_production, ws_downtime, ws_quality, ws_credentials, ws_reasons)
+                main_ui(ws_config, ws_production, ws_downtime, ws_quality, ws_credentials, ws_reasons, ws_steps)
         else:
-            main_ui(ws_config, ws_production, ws_downtime, ws_quality, ws_credentials, ws_reasons)
+            main_ui(ws_config, ws_production, ws_downtime, ws_quality, ws_credentials, ws_reasons, ws_steps)
 
     except Exception as e:
         st.error(f"Application error: {str(e)}")
