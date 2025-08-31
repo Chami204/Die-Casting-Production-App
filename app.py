@@ -443,15 +443,26 @@ def signature_canvas():
     <style>
     .signature-container {
         border: 2px dashed #ccc;
-        padding: 10px;
-        border-radius: 5px;
+        padding: 15px;
+        border-radius: 8px;
         background-color: #f9f9f9;
+        margin-bottom: 15px;
+    }
+    .signature-instruction {
+        color: #666;
+        font-size: 14px;
+        margin-bottom: 10px;
     }
     </style>
     """, unsafe_allow_html=True)
     
     st.markdown("<div class='signature-container'>", unsafe_allow_html=True)
-    signature = st.text_input("Draw your signature in the box below or type it:", key="signature_input")
+    st.markdown("<div class='signature-instruction'>Please type your full name as your digital signature:</div>", unsafe_allow_html=True)
+    
+    signature = st.text_input("Digital Signature", key="signature_input", 
+                             placeholder="Enter your full name here", 
+                             label_visibility="collapsed")
+    
     st.markdown("</div>", unsafe_allow_html=True)
     
     return signature
@@ -460,7 +471,7 @@ def signature_canvas():
 def admin_ui(ws_config, ws_credentials, ws_reasons, ws_steps):
     st.subheader("Admin Management Panel")
     
-    tabs = st.tabs(["Products & Subtopics", "User Credentials", "Downtime Reasons", "Process Steps", "Quality Settings"])
+    tabs = st.tabs(["Products & Subtopics", "User Credentials", "Downtime Reasons", "Process Steps", "Quality Team Settings"])
     
     with tabs[0]:
         st.subheader("Manage Products & Subtopics")
@@ -595,14 +606,66 @@ def admin_ui(ws_config, ws_credentials, ws_reasons, ws_steps):
                     if write_process_steps(ws_steps, st.session_state.process_steps):
                         st.warning(f"Removed step: {step_to_remove}")
                         st.rerun()
+        
+        with st.expander("Edit Process Steps"):
+            st.write("Edit existing process steps:")
+            edited_steps = []
+            for i, step in enumerate(st.session_state.process_steps):
+                edited_step = st.text_input(f"Process Step {i+1}", value=step, key=f"edit_step_{i}")
+                edited_steps.append(edited_step)
+            
+            if st.button("Save All Process Steps"):
+                # Remove empty steps and duplicates
+                cleaned_steps = list(set([step.strip() for step in edited_steps if step.strip()]))
+                if cleaned_steps:
+                    st.session_state.process_steps = cleaned_steps
+                    if write_process_steps(ws_steps, st.session_state.process_steps):
+                        st.success("All process steps updated successfully!")
+                        st.rerun()
     
     with tabs[4]:
         st.subheader("Quality Team Records Settings")
-        st.info("All quality team record settings can be managed through the individual sections above.")
-        st.write("To modify quality-related settings:")
-        st.write("1. Use 'Products & Subtopics' to manage product-specific quality fields")
-        st.write("2. Use 'Process Steps' to manage available process steps")
-        st.write("3. All quality record fields are hardcoded in the application for consistency")
+        
+        st.info("Manage all quality team record settings in this section")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**Current Process Steps:**")
+            for i, step in enumerate(st.session_state.process_steps, 1):
+                st.write(f"{i}. {step}")
+        
+        with col2:
+            st.write("**Quick Actions:**")
+            if st.button("Add Default Process Steps"):
+                default_steps = DEFAULT_PROCESS_STEPS.copy()
+                for step in default_steps:
+                    if step not in st.session_state.process_steps:
+                        st.session_state.process_steps.append(step)
+                if write_process_steps(ws_steps, st.session_state.process_steps):
+                    st.success("Default process steps added!")
+                    st.rerun()
+            
+            if st.button("Clear All Process Steps"):
+                st.session_state.process_steps = []
+                if write_process_steps(ws_steps, st.session_state.process_steps):
+                    st.warning("All process steps cleared!")
+                    st.rerun()
+        
+        st.divider()
+        st.write("**Add Multiple Process Steps:**")
+        multiple_steps = st.text_area("Enter multiple process steps (one per line):", 
+                                     height=100,
+                                     help="Enter each process step on a separate line")
+        if st.button("Add Multiple Steps"):
+            if multiple_steps.strip():
+                new_steps = [step.strip() for step in multiple_steps.split('\n') if step.strip()]
+                for step in new_steps:
+                    if step not in st.session_state.process_steps:
+                        st.session_state.process_steps.append(step)
+                if write_process_steps(ws_steps, st.session_state.process_steps):
+                    st.success(f"Added {len(new_steps)} new process steps!")
+                    st.rerun()
     
     # Manual refresh button
     if st.button("🔄 Refresh All Configuration"):
