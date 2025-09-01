@@ -42,6 +42,9 @@ DEFAULT_USER_CREDENTIALS = {
     "operator3": "password3"
 }
 
+# Quality section password
+QUALITY_PASSWORD = "quality123"
+
 # ------------------ Cache Setup ------------------
 cache = cachetools.TTLCache(maxsize=100, ttl=30)
 
@@ -56,6 +59,8 @@ if 'current_section' not in st.session_state:
     st.session_state.current_section = "Production Records"
 if 'production_password_entered' not in st.session_state:
     st.session_state.production_password_entered = False
+if 'quality_password_entered' not in st.session_state:
+    st.session_state.quality_password_entered = False
 if 'current_user' not in st.session_state:
     st.session_state.current_user = None
 if 'gs_client' not in st.session_state:
@@ -192,53 +197,70 @@ def get_worksheet(sheet_name):
         return worksheet
 
 # ------------------ Optimized Config helpers ------------------
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def read_config_cached(_ws_config):
     try:
-        values = _ws_config.get_all_records()
-        cfg = {}
-        for row in values:
-            p = str(row.get("Product", "")).strip()
-            s = str(row.get("Subtopic", "")).strip()
-            if not p or not s:
-                continue
-            cfg.setdefault(p, []).append(s)
-        return cfg
+        values = _ws_config.get_all_values()
+        if len(values) > 1:
+            headers = values[0]
+            data = values[1:101]  # Limit to 100 rows
+            cfg = {}
+            for row in data:
+                if len(row) >= 2:
+                    p = str(row[0]).strip()
+                    s = str(row[1]).strip()
+                    if p and s:
+                        cfg.setdefault(p, []).append(s)
+            return cfg
+        return {}
     except Exception as e:
         st.error(f"Error reading config: {str(e)}")
         return {}
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def read_user_credentials_cached(_ws_credentials):
     try:
-        values = _ws_credentials.get_all_records()
-        credentials = {}
-        for row in values:
-            username = str(row.get("Username", "")).strip()
-            password = str(row.get("Password", "")).strip()
-            if username and password:
-                credentials[username] = password
-        return credentials
+        values = _ws_credentials.get_all_values()
+        if len(values) > 1:
+            credentials = {}
+            for row in values[1:21]:  # Limit to 20 users
+                if len(row) >= 2:
+                    username = str(row[0]).strip()
+                    password = str(row[1]).strip()
+                    if username and password:
+                        credentials[username] = password
+            return credentials
+        return DEFAULT_USER_CREDENTIALS.copy()
     except Exception as e:
         st.error(f"Error reading user credentials: {str(e)}")
         return DEFAULT_USER_CREDENTIALS.copy()
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def read_downtime_reasons_cached(_ws_reasons):
     try:
-        values = _ws_reasons.get_all_records()
-        reasons = [str(row.get("Reason", "")).strip() for row in values if str(row.get("Reason", "")).strip()]
-        return reasons if reasons else DEFAULT_DOWNTIME_REASONS.copy()
+        values = _ws_reasons.get_all_values()
+        if len(values) > 1:
+            reasons = []
+            for row in values[1:51]:  # Limit to 50 reasons
+                if row and str(row[0]).strip():
+                    reasons.append(str(row[0]).strip())
+            return reasons if reasons else DEFAULT_DOWNTIME_REASONS.copy()
+        return DEFAULT_DOWNTIME_REASONS.copy()
     except Exception as e:
         st.error(f"Error reading downtime reasons: {str(e)}")
         return DEFAULT_DOWNTIME_REASONS.copy()
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def read_process_steps_cached(_ws_steps):
     try:
-        values = _ws_steps.get_all_records()
-        steps = [str(row.get("Step", "")).strip() for row in values if str(row.get("Step", "")).strip()]
-        return steps if steps else DEFAULT_PROCESS_STEPS.copy()
+        values = _ws_steps.get_all_values()
+        if len(values) > 1:
+            steps = []
+            for row in values[1:21]:  # Limit to 20 steps
+                if row and str(row[0]).strip():
+                    steps.append(str(row[0]).strip())
+            return steps if steps else DEFAULT_PROCESS_STEPS.copy()
+        return DEFAULT_PROCESS_STEPS.copy()
     except Exception as e:
         st.error(f"Error reading process steps: {str(e)}")
         return DEFAULT_PROCESS_STEPS.copy()
@@ -346,53 +368,58 @@ def refresh_config_if_needed(ws_config, ws_credentials, ws_reasons, ws_steps):
         st.session_state.last_config_update = datetime.now()
 
 # ------------------ Optimized History helpers ------------------
-@st.cache_data(ttl=15, show_spinner=False)
-def get_recent_production_entries_cached(_ws_production, product: str, limit: int = 20):
+@st.cache_data(ttl=60, show_spinner=False)
+def get_recent_production_entries_cached(_ws_production, product: str, limit: int = 10):
     try:
-        values = _ws_production.get_all_records()
-        if not values:
-            return pd.DataFrame()
-        df = pd.DataFrame(values)
-        if "Product" in df.columns:
-            df = df[df["Product"] == product]
-        return df.sort_values(by="Timestamp", ascending=False).head(limit)
+        values = _ws_production.get_all_values()
+        if len(values) > 1:
+            headers = values[0]
+            data = values[1:limit+1]
+            df = pd.DataFrame(data, columns=headers)
+            if "Product" in df.columns:
+                df = df[df["Product"] == product]
+            return df.sort_values(by="Timestamp", ascending=False).head(limit)
+        return pd.DataFrame()
     except Exception as e:
         st.error(f"Error loading history: {str(e)}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=15, show_spinner=False)
-def get_recent_downtime_entries_cached(_ws_downtime, limit: int = 20):
+@st.cache_data(ttl=60, show_spinner=False)
+def get_recent_downtime_entries_cached(_ws_downtime, limit: int = 10):
     try:
-        values = _ws_downtime.get_all_records()
-        if not values:
-            return pd.DataFrame()
-        df = pd.DataFrame(values)
-        return df.sort_values(by="Timestamp", ascending=False).head(limit)
+        values = _ws_downtime.get_all_values()
+        if len(values) > 1:
+            headers = values[0]
+            data = values[1:limit+1]
+            return pd.DataFrame(data, columns=headers)
+        return pd.DataFrame()
     except Exception as e:
         st.error(f"Error loading downtime history: {str(e)}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=15, show_spinner=False)
-def get_recent_quality_entries_cached(_ws_quality, product: str, limit: int = 20):
+@st.cache_data(ttl=60, show_spinner=False)
+def get_recent_quality_entries_cached(_ws_quality, product: str, limit: int = 10):
     try:
-        values = _ws_quality.get_all_records()
-        if not values:
-            return pd.DataFrame()
-        df = pd.DataFrame(values)
-        if "Product" in df.columns:
-            df = df[df["Product"] == product]
-        return df.sort_values(by="Timestamp", ascending=False).head(limit)
+        values = _ws_quality.get_all_values()
+        if len(values) > 1:
+            headers = values[0]
+            data = values[1:limit+1]
+            df = pd.DataFrame(data, columns=headers)
+            if "Product" in df.columns:
+                df = df[df["Product"] == product]
+            return df.sort_values(by="Timestamp", ascending=False).head(limit)
+        return pd.DataFrame()
     except Exception as e:
         st.error(f"Error loading quality history: {str(e)}")
         return pd.DataFrame()
 
-def get_recent_production_entries(ws_production, product: str, limit: int = 20):
+def get_recent_production_entries(ws_production, product: str, limit: int = 10):
     return get_recent_production_entries_cached(ws_production, product, limit)
 
-def get_recent_downtime_entries(ws_downtime, limit: int = 20):
+def get_recent_downtime_entries(ws_downtime, limit: int = 10):
     return get_recent_downtime_entries_cached(ws_downtime, limit)
 
-def get_recent_quality_entries(ws_quality, product: str, limit: int = 20):
+def get_recent_quality_entries(ws_quality, product: str, limit: int = 10):
     return get_recent_quality_entries_cached(ws_quality, product, limit)
 
 def append_production_record(ws_production, record: dict):
@@ -653,6 +680,11 @@ def admin_ui(ws_config, ws_credentials, ws_reasons, ws_steps):
                     st.rerun()
         
         st.divider()
+        st.write("**Quality Section Password:**")
+        st.write(f"Current Password: `{QUALITY_PASSWORD}`")
+        st.info("To change the password, modify the QUALITY_PASSWORD variable in the code")
+        
+        st.divider()
         st.write("**Add Multiple Process Steps:**")
         multiple_steps = st.text_area("Enter multiple process steps (one per line):", 
                                      height=100,
@@ -750,7 +782,7 @@ def production_records_ui(ws_config, ws_production, ws_credentials):
                     "Team": team,
                     "Machine": machine,
                     "Product": product,
-                    "Operator": st.session_state.current_user,
+                    "Operator": st.session_state.current_user,  # Add operator name
                     **values,
                     "Comments": comments
                 }
@@ -828,6 +860,24 @@ def downtime_records_ui(ws_downtime, ws_config, ws_reasons):
 # ------------------ Quality Records UI ------------------
 def quality_records_ui(ws_quality, ws_config, ws_steps):
     st.subheader("Quality Team Records")
+    
+    # Password protection for Quality section
+    if not st.session_state.quality_password_entered:
+        st.info("Please enter the quality team password to access this section")
+        quality_pw = st.text_input("Quality Team Password", type="password", key="quality_password")
+        
+        if st.button("Authenticate", key="quality_auth_btn"):
+            if quality_pw == QUALITY_PASSWORD:
+                st.session_state.quality_password_entered = True
+                st.rerun()
+            else:
+                st.error("Incorrect password. Please try again.")
+        return
+    
+    st.success("✓ Authenticated as Quality Team Member")
+    if st.button("Logout from Quality", key="quality_logout_btn"):
+        st.session_state.quality_password_entered = False
+        st.rerun()
     
     st.info("Sri Lanka Time: " + get_sri_lanka_time())
     
@@ -932,6 +982,13 @@ def main_ui(ws_config, ws_production, ws_downtime, ws_quality, ws_credentials, w
 # ------------------ Main ------------------
 def main():
     st.set_page_config(page_title=APP_TITLE, page_icon="🗂️", layout="wide")
+    
+    # Display warning if quota exceeded
+    st.warning("""
+    ⚠️ Google Sheets API quota exceeded. 
+    Some features may be limited. 
+    The app will continue with cached data.
+    """)
     
     # Initialize Google Sheets client only once
     if st.session_state.gs_client is None:
