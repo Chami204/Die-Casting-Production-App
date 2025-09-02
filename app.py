@@ -87,7 +87,8 @@ DEFAULT_PROCESS_STEPS = [
     "Inspection",
     "Testing",
     "Final QC",
-    "Packaging"
+    "Packaging",
+    "Casting"
 ]
 
 DEFAULT_USER_CREDENTIALS = {
@@ -1309,5 +1310,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
