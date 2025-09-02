@@ -103,8 +103,9 @@ DEFAULT_USER_CREDENTIALS = {
 # Quality section password
 QUALITY_PASSWORD = "quality123"
 
+
 # ------------------ Local Storage Settings ------------------
-DESKTOP_PATH = Path("C:\Users\chami.gangoda\Downloads\path")
+DESKTOP_PATH = Path("data")  # Creates a 'data' folder within your app
 LOCAL_EXCEL_FILE = DESKTOP_PATH / "die_casting_production_data.xlsx"
 LOCAL_BACKUP_INTERVAL = 300  # 5 minutes in seconds
 
@@ -159,6 +160,16 @@ if 'last_local_backup' not in st.session_state:
     st.session_state.last_local_backup = None
 
 # ------------------ Helper Functions ------------------
+
+def ensure_directory_exists(directory_path):
+    """Create directory if it doesn't exist"""
+    try:
+        directory_path.mkdir(parents=True, exist_ok=True)
+        return True
+    except Exception as e:
+        st.error(f"Error creating directory {directory_path}: {str(e)}")
+        return False
+        
 def get_sri_lanka_time():
     """Get current time in Sri Lanka timezone"""
     return datetime.now(SRI_LANKA_TZ).strftime(TIME_FORMAT)
@@ -179,6 +190,9 @@ def should_backup_to_local():
 def init_local_excel_file():
     """Initialize the local Excel file with required sheets if it doesn't exist"""
     try:
+        # Ensure the directory exists first
+        ensure_directory_exists(DESKTOP_PATH)
+        
         if not LOCAL_EXCEL_FILE.exists():
             # Create a new Excel file with all required sheets
             with pd.ExcelWriter(LOCAL_EXCEL_FILE, engine='openpyxl') as writer:
@@ -1619,6 +1633,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
