@@ -7,6 +7,8 @@ from google.oauth2.service_account import Credentials
 import pytz
 import time
 import cachetools
+import json
+from functools import wraps
 
 # ------------------ Settings ------------------
 APP_TITLE = "Die Casting Production"
@@ -21,12 +23,64 @@ DEFAULT_SUBTOPICS = [
     "Approved Qty"
 ]
 
+# Updated Default Downtime Reasons as requested
 DEFAULT_DOWNTIME_REASONS = [
-    "Mechanical Failure",
-    "Electrical Issue",
-    "Maintenance",
-    "Material Shortage",
-    "Other"
+    "TAM - TRAPPED Al IN THE MOULD",
+    "MOH - MOULD OVER HEAT",
+    "SRR - SPRAY ROBBOT REPAIR",
+    "TWT - TOTAL WORKED TIME(Mins)",
+    "PM - PLANNED MAINTENANCE",
+    "SRA - SET UP ROBBOT ARM",
+    "MA - MOULD ASSEMBLE",
+    "RAR - ROBBOT ARM REPAIR",
+    "PC - POWER CUT",
+    "MB - MACHINE BREAKDOWN",
+    "PI - PLANING ISSUE",
+    "FC - FURNACE CLEANING",
+    "PTC - PLUNGER TOP CHANGE",
+    "MS - MOULD SETUP",
+    "D - DINING",
+    "ERE - EXTRACTOR ROBOT ERROR",
+    "SSR - SHOT SLEEVE REPLACE",
+    "SC - STOCK COUNT",
+    "PHF - PRE-HEATING FURNACE",
+    "UC - UNSAFE CONDITION",
+    "LLG - LACK OF LPG GAS",
+    "PTS - PLUNGER TOP STUCK",
+    "LRR - LADLER ROBBOT REPAIR",
+    "UF - UNLOADING FURNACE",
+    "PS - PLANT SHUTDOWN",
+    "MTR - MOULD TEST RUN",
+    "ASR - ADJUST THE SPRAY ROBBOT",
+    "MAC - MACHINE CLEANING",
+    "EPD - EJECTOR PIN DAMAGED",
+    "MC - MOULD CHANGE",
+    "TDT - TOTAL DOWN TIME",
+    "SRB - SPRAY ROBBOT BREAKDOWN",
+    "LOO - LACK OF OPERATORS",
+    "NRA - NO RECORDS AVAILABLE",
+    "MR - MOULD REPAIR",
+    "MD - MOULD DAMAGE",
+    "FF - FILLING THE FURNACE",
+    "T - TRAINING",
+    "GHD - GAS HOSE DAMAGE",
+    "EF - ELECTRICAL FAULT",
+    "LFT - LOW FURNACE TEMPERATURE",
+    "SS - SHIFT STARTING",
+    "SF - SHIFT FININSHING",
+    "SCS - SCRAPS SHORTAGE",
+    "MH - MOULD HEATING",
+    "UM - UNPLANNED MAINTENANCE",
+    "FRB - FURNACE RELATED BREAKDOWN",
+    "CSR - COOLING SYSTEM REPAIR",
+    "GOS - GEAR OIL OUT OF STOCK",
+    "LOS - LUBRICANT OUT OF STOCK",
+    "MCC - MOULD CLEANING",
+    "PLE - PLUNGER TOP LUBRICANT ERROR",
+    "FU - FURNACE UNLOADING",
+    "MRS - MOULD RE-SET UP",
+    "MCE - MOULD CLAMP ERROR",
+    "PSC - PLUNGER SLEEVE CLEANING"
 ]
 
 DEFAULT_PROCESS_STEPS = [
@@ -37,16 +91,19 @@ DEFAULT_PROCESS_STEPS = [
 ]
 
 DEFAULT_USER_CREDENTIALS = {
-    "Team A": "123",
-    "Team B": "1234",
-    "Team C": "12345"
+    "operator1": "password1",
+    "operator2": "password2",
+    "operator3": "password3"
 }
 
 # Quality section password
 QUALITY_PASSWORD = "quality123"
 
+# ------------------ Limits ------------------
+MAX_USERS = 10  # Limited to 10 users
+
 # ------------------ Cache Setup ------------------
-cache = cachetools.TTLCache(maxsize=100, ttl=30)
+cache = cachetools.TTLCache(maxsize=100, ttl=120)  # Increased TTL to reduce API calls
 
 # ------------------ Initialize Session State ------------------
 if 'cfg' not in st.session_state:
@@ -75,6 +132,20 @@ if 'user_credentials' not in st.session_state:
     st.session_state.user_credentials = DEFAULT_USER_CREDENTIALS.copy()
 if 'signature_data' not in st.session_state:
     st.session_state.signature_data = None
+if 'pending_records' not in st.session_state:
+    st.session_state.pending_records = {"production": [], "downtime": [], "quality": []}
+if 'api_available' not in st.session_state:
+    st.session_state.api_available = True
+if 'local_storage' not in st.session_state:
+    st.session_state.local_storage = {
+        "production": [],
+        "downtime": [], 
+        "quality": [],
+        "config": {},
+        "user_credentials": DEFAULT_USER_CREDENTIALS.copy(),
+        "downtime_reasons": DEFAULT_DOWNTIME_REASONS.copy(),
+        "process_steps": DEFAULT_PROCESS_STEPS.copy()
+    }
 
 # ------------------ Helper Functions ------------------
 def get_sri_lanka_time():
@@ -82,18 +153,53 @@ def get_sri_lanka_time():
     return datetime.now(SRI_LANKA_TZ).strftime(TIME_FORMAT)
 
 def should_refresh_config():
-    """Check if config should be refreshed (every 30 seconds)"""
+    """Check if config should be refreshed (every 60 seconds)"""
     if st.session_state.last_config_update is None:
         return True
-    return (datetime.now() - st.session_state.last_config_update).total_seconds() > 30
+    return (datetime.now() - st.session_state.last_config_update).total_seconds() > 60
+
+# ------------------ Rate Limiting Decorator ------------------
+def rate_limited(max_per_minute):
+    min_interval = 60.0 / max_per_minute
+    def decorator(func):
+        last_time_called = [0.0]
+        @wraps(func)
+        def rate_limited_function(*args, **kwargs):
+            elapsed = time.time() - last_time_called[0]
+            left_to_wait = min_interval - elapsed
+            if left_to_wait > 0:
+                time.sleep(left_to_wait)
+            last_time_called[0] = time.time()
+            return func(*args, **kwargs)
+        return rate_limited_function
+    return decorator
+
+# ------------------ Safe API Call Wrapper ------------------
+def safe_api_call(func, *args, **kwargs):
+    """Wrapper for Google Sheets calls with error handling"""
+    try:
+        if not st.session_state.api_available:
+            return None
+        result = func(*args, **kwargs)
+        st.session_state.api_available = True
+        return result
+    except Exception as e:
+        if "quota" in str(e).lower() or "429" in str(e):
+            st.session_state.api_available = False
+            st.warning("Google Sheets API quota exceeded. Using local storage. Data will be synced when available.")
+            return None
+        else:
+            st.error(f"API Error: {str(e)}")
+            return None
 
 # ------------------ Cached Google Sheets Functions ------------------
 @st.cache_resource(show_spinner=False)
+@rate_limited(10)  # 10 calls per minute max
 def get_gs_client():
     try:
         if 'gcp_service_account' not in st.secrets:
             st.error("Google Service Account credentials not found in secrets.")
-            st.stop()
+            return None
             
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
@@ -117,93 +223,109 @@ def get_gs_client():
         return gspread.authorize(creds)
     except Exception as e:
         st.error(f"Failed to authenticate with Google Sheets: {str(e)}")
-        st.stop()
+        return None
 
 @st.cache_resource(show_spinner=False)
+@rate_limited(5)  # 5 calls per minute max
 def open_spreadsheet(_client):
     try:
         name = st.secrets["gsheet"]["spreadsheet_name"]
-        return _client.open(name)
+        return safe_api_call(_client.open, name)
     except Exception as e:
         st.error(f"Error opening spreadsheet: {str(e)}")
-        st.stop()
+        return None
 
 def get_worksheet(sheet_name):
-    """Get worksheet with caching"""
+    """Get worksheet with caching and fallback"""
     cache_key = f"worksheet_{sheet_name}"
     if cache_key in cache:
         return cache[cache_key]
     
+    if not st.session_state.api_available:
+        return None
+        
     try:
-        worksheet = st.session_state.spreadsheet.worksheet(sheet_name)
-        cache[cache_key] = worksheet
+        worksheet = safe_api_call(st.session_state.spreadsheet.worksheet, sheet_name)
+        if worksheet:
+            cache[cache_key] = worksheet
         return worksheet
     except gspread.WorksheetNotFound:
-        # Create worksheet if it doesn't exist
-        if sheet_name == "Config":
-            worksheet = st.session_state.spreadsheet.add_worksheet(title="Config", rows=1000, cols=2)
-            rows = [["Product", "Subtopic"]]
-            worksheet.update("A1", rows)
-            worksheet.freeze(rows=1)
-        elif sheet_name == "Production_Quality_Records":
-            worksheet = st.session_state.spreadsheet.add_worksheet(title="Production_Quality_Records", rows=2000, cols=50)
-            headers = ["RecordType", "EntryID", "Timestamp", "Shift", "Team", "Machine", "Product", "Operator", "Comments"] + DEFAULT_SUBTOPICS
-            worksheet.update("A1", [headers])
-            worksheet.freeze(rows=1)
-        elif sheet_name == "Machine_Downtime_Records":
-            worksheet = st.session_state.spreadsheet.add_worksheet(title="Machine_Downtime_Records", rows=2000, cols=20)
-            headers = ["EntryID", "Timestamp", "Shift", "Team", "Machine", "Planned_Item", "Downtime_Reason", "Other_Comments", "Duration_Min"]
-            worksheet.update("A1", [headers])
-            worksheet.freeze(rows=1)
-        elif sheet_name == "Quality_Records":
-            worksheet = st.session_state.spreadsheet.add_worksheet(title="Quality_Records", rows=2000, cols=50)
-            headers = [
-                "EntryID", "Timestamp", "Process_Step", "Product", "Total_Lot_Qty", 
-                "Sample_Size", "AQL_Level", "Accept_Reject", "Defects_Found", 
-                "Results", "Quality_Inspector", "ETF_Number", "Digital_Signature", "Comments"
-            ]
-            worksheet.update("A1", [headers])
-            worksheet.freeze(rows=1)
-        elif sheet_name == "User_Credentials":
-            worksheet = st.session_state.spreadsheet.add_worksheet(title="User_Credentials", rows=100, cols=3)
-            headers = ["Username", "Password", "Role"]
-            worksheet.update("A1", [headers])
-            # Add default users
-            default_users = [
-                ["operator1", "password1", "Operator"],
-                ["operator2", "password2", "Operator"],
-                ["operator3", "password3", "Operator"]
-            ]
-            worksheet.update("A2", default_users)
-            worksheet.freeze(rows=1)
-        elif sheet_name == "Downtime_Reasons":
-            worksheet = st.session_state.spreadsheet.add_worksheet(title="Downtime_Reasons", rows=100, cols=1)
-            headers = ["Reason"]
-            worksheet.update("A1", [headers])
-            # Add default reasons
-            default_reasons = [[reason] for reason in DEFAULT_DOWNTIME_REASONS]
-            worksheet.update("A2", default_reasons)
-            worksheet.freeze(rows=1)
-        elif sheet_name == "Process_Steps":
-            worksheet = st.session_state.spreadsheet.add_worksheet(title="Process_Steps", rows=100, cols=1)
-            headers = ["Step"]
-            worksheet.update("A1", [headers])
-            # Add default process steps
-            default_steps = [[step] for step in DEFAULT_PROCESS_STEPS]
-            worksheet.update("A2", default_steps)
-            worksheet.freeze(rows=1)
-        
-        cache[cache_key] = worksheet
-        return worksheet
+        try:
+            if sheet_name == "Config":
+                worksheet = safe_api_call(st.session_state.spreadsheet.add_worksheet, title="Config", rows=1000, cols=2)
+                if worksheet:
+                    rows = [["Product", "Subtopic"]]
+                    safe_api_call(worksheet.update, "A1", rows)
+                    safe_api_call(worksheet.freeze, rows=1)
+            elif sheet_name == "Production_Quality_Records":
+                worksheet = safe_api_call(st.session_state.spreadsheet.add_worksheet, title="Production_Quality_Records", rows=2000, cols=50)
+                if worksheet:
+                    headers = ["RecordType", "EntryID", "Timestamp", "Shift", "Team", "Machine", "Product", "Operator", "Comments"] + DEFAULT_SUBTOPICS
+                    safe_api_call(worksheet.update, "A1", [headers])
+                    safe_api_call(worksheet.freeze, rows=1)
+            elif sheet_name == "Machine_Downtime_Records":
+                worksheet = safe_api_call(st.session_state.spreadsheet.add_worksheet, title="Machine_Downtime_Records", rows=2000, cols=20)
+                if worksheet:
+                    headers = ["EntryID", "Timestamp", "Shift", "Team", "Machine", "Planned_Item", "Downtime_Reason", "Other_Comments", "Duration_Min"]
+                    safe_api_call(worksheet.update, "A1", [headers])
+                    safe_api_call(worksheet.freeze, rows=1)
+            elif sheet_name == "Quality_Records":
+                worksheet = safe_api_call(st.session_state.spreadsheet.add_worksheet, title="Quality_Records", rows=2000, cols=50)
+                if worksheet:
+                    headers = [
+                        "EntryID", "Timestamp", "Process_Step", "Product", "Total_Lot_Qty", 
+                        "Sample_Size", "AQL_Level", "Accept_Reject", "Defects_Found", 
+                        "Results", "Quality_Inspector", "ETF_Number", "Digital_Signature", "Comments"
+                    ]
+                    safe_api_call(worksheet.update, "A1", [headers])
+                    safe_api_call(worksheet.freeze, rows=1)
+            elif sheet_name == "User_Credentials":
+                worksheet = safe_api_call(st.session_state.spreadsheet.add_worksheet, title="User_Credentials", rows=100, cols=3)
+                if worksheet:
+                    headers = ["Username", "Password", "Role"]
+                    safe_api_call(worksheet.update, "A1", [headers])
+                    default_users = [
+                        ["operator1", "password1", "Operator"],
+                        ["operator2", "password2", "Operator"],
+                        ["operator3", "password3", "Operator"]
+                    ]
+                    safe_api_call(worksheet.update, "A2", default_users)
+                    safe_api_call(worksheet.freeze, rows=1)
+            elif sheet_name == "Downtime_Reasons":
+                worksheet = safe_api_call(st.session_state.spreadsheet.add_worksheet, title="Downtime_Reasons", rows=100, cols=1)
+                if worksheet:
+                    headers = ["Reason"]
+                    safe_api_call(worksheet.update, "A1", [headers])
+                    default_reasons = [[reason] for reason in DEFAULT_DOWNTIME_REASONS]
+                    safe_api_call(worksheet.update, "A2", default_reasons)
+                    safe_api_call(worksheet.freeze, rows=1)
+            elif sheet_name == "Process_Steps":
+                worksheet = safe_api_call(st.session_state.spreadsheet.add_worksheet, title="Process_Steps", rows=100, cols=1)
+                if worksheet:
+                    headers = ["Step"]
+                    safe_api_call(worksheet.update, "A1", [headers])
+                    default_steps = [[step] for step in DEFAULT_PROCESS_STEPS]
+                    safe_api_call(worksheet.update, "A2", default_steps)
+                    safe_api_call(worksheet.freeze, rows=1)
+            
+            if worksheet:
+                cache[cache_key] = worksheet
+            return worksheet
+        except Exception as e:
+            st.error(f"Error creating worksheet: {str(e)}")
+            return None
 
 # ------------------ Optimized Config helpers ------------------
 @st.cache_data(ttl=300, show_spinner=False)
 def read_config_cached(_ws_config):
     try:
-        values = _ws_config.get_all_values()
-        if len(values) > 1:
+        if not _ws_config or not st.session_state.api_available:
+            return st.session_state.local_storage["config"]
+            
+        values = safe_api_call(_ws_config.get_all_values)
+        if values and len(values) > 1:
             headers = values[0]
-            data = values[1:101]  # Limit to 100 rows
+            data = values[1:]  # No limit for products
             cfg = {}
             for row in data:
                 if len(row) >= 2:
@@ -211,59 +333,76 @@ def read_config_cached(_ws_config):
                     s = str(row[1]).strip()
                     if p and s:
                         cfg.setdefault(p, []).append(s)
+            # Update local storage
+            st.session_state.local_storage["config"] = cfg
             return cfg
-        return {}
+        return st.session_state.local_storage["config"]
     except Exception as e:
         st.error(f"Error reading config: {str(e)}")
-        return {}
+        return st.session_state.local_storage["config"]
 
 @st.cache_data(ttl=300, show_spinner=False)
 def read_user_credentials_cached(_ws_credentials):
     try:
-        values = _ws_credentials.get_all_values()
-        if len(values) > 1:
+        if not _ws_credentials or not st.session_state.api_available:
+            return st.session_state.local_storage["user_credentials"]
+            
+        values = safe_api_call(_ws_credentials.get_all_values)
+        if values and len(values) > 1:
             credentials = {}
-            for row in values[1:21]:  # Limit to 20 users
+            for row in values[1:MAX_USERS + 1]:
                 if len(row) >= 2:
                     username = str(row[0]).strip()
                     password = str(row[1]).strip()
                     if username and password:
                         credentials[username] = password
+            # Update local storage
+            st.session_state.local_storage["user_credentials"] = credentials
             return credentials
-        return DEFAULT_USER_CREDENTIALS.copy()
+        return st.session_state.local_storage["user_credentials"]
     except Exception as e:
         st.error(f"Error reading user credentials: {str(e)}")
-        return DEFAULT_USER_CREDENTIALS.copy()
+        return st.session_state.local_storage["user_credentials"]
 
 @st.cache_data(ttl=300, show_spinner=False)
 def read_downtime_reasons_cached(_ws_reasons):
     try:
-        values = _ws_reasons.get_all_values()
-        if len(values) > 1:
+        if not _ws_reasons or not st.session_state.api_available:
+            return st.session_state.local_storage["downtime_reasons"]
+            
+        values = safe_api_call(_ws_reasons.get_all_values)
+        if values and len(values) > 1:
             reasons = []
-            for row in values[1:51]:  # Limit to 50 reasons
+            for row in values[1:]:
                 if row and str(row[0]).strip():
                     reasons.append(str(row[0]).strip())
-            return reasons if reasons else DEFAULT_DOWNTIME_REASONS.copy()
-        return DEFAULT_DOWNTIME_REASONS.copy()
+            result = reasons if reasons else st.session_state.local_storage["downtime_reasons"]
+            st.session_state.local_storage["downtime_reasons"] = result
+            return result
+        return st.session_state.local_storage["downtime_reasons"]
     except Exception as e:
         st.error(f"Error reading downtime reasons: {str(e)}")
-        return DEFAULT_DOWNTIME_REASONS.copy()
+        return st.session_state.local_storage["downtime_reasons"]
 
 @st.cache_data(ttl=300, show_spinner=False)
 def read_process_steps_cached(_ws_steps):
     try:
-        values = _ws_steps.get_all_values()
-        if len(values) > 1:
+        if not _ws_steps or not st.session_state.api_available:
+            return st.session_state.local_storage["process_steps"]
+            
+        values = safe_api_call(_ws_steps.get_all_values)
+        if values and len(values) > 1:
             steps = []
-            for row in values[1:21]:  # Limit to 20 steps
+            for row in values[1:]:
                 if row and str(row[0]).strip():
                     steps.append(str(row[0]).strip())
-            return steps if steps else DEFAULT_PROCESS_STEPS.copy()
-        return DEFAULT_PROCESS_STEPS.copy()
+            result = steps if steps else st.session_state.local_storage["process_steps"]
+            st.session_state.local_storage["process_steps"] = result
+            return result
+        return st.session_state.local_storage["process_steps"]
     except Exception as e:
         st.error(f"Error reading process steps: {str(e)}")
-        return DEFAULT_PROCESS_STEPS.copy()
+        return st.session_state.local_storage["process_steps"]
 
 def read_config(ws_config):
     return read_config_cached(ws_config)
@@ -279,13 +418,21 @@ def read_process_steps(ws_steps):
 
 def write_config(ws_config, cfg: dict):
     try:
+        if not st.session_state.api_available:
+            st.session_state.local_storage["config"] = cfg
+            st.success("Config saved to local storage (will sync when API available)")
+            return True
+            
         rows = [["Product", "Subtopic"]]
         for product, subs in cfg.items():
             for s in subs:
                 rows.append([product, s])
-        ws_config.clear()
-        ws_config.update("A1", rows)
-        ws_config.freeze(rows=1)
+        safe_api_call(ws_config.clear)
+        safe_api_call(ws_config.update, "A1", rows)
+        safe_api_call(ws_config.freeze, rows=1)
+        
+        # Update local storage
+        st.session_state.local_storage["config"] = cfg
         
         # Clear cache after update
         cache.clear()
@@ -293,16 +440,25 @@ def write_config(ws_config, cfg: dict):
         return True
     except Exception as e:
         st.error(f"Error writing config: {str(e)}")
-        return False
+        st.session_state.local_storage["config"] = cfg
+        return True
 
 def write_user_credentials(ws_credentials, credentials: dict):
     try:
+        if not st.session_state.api_available:
+            st.session_state.local_storage["user_credentials"] = credentials
+            st.success("User credentials saved to local storage (will sync when API available)")
+            return True
+            
         rows = [["Username", "Password", "Role"]]
         for username, password in credentials.items():
             rows.append([username, password, "Operator"])
-        ws_credentials.clear()
-        ws_credentials.update("A1", rows)
-        ws_credentials.freeze(rows=1)
+        safe_api_call(ws_credentials.clear)
+        safe_api_call(ws_credentials.update, "A1", rows)
+        safe_api_call(ws_credentials.freeze, rows=1)
+        
+        # Update local storage
+        st.session_state.local_storage["user_credentials"] = credentials
         
         # Clear cache after update
         cache.clear()
@@ -310,16 +466,25 @@ def write_user_credentials(ws_credentials, credentials: dict):
         return True
     except Exception as e:
         st.error(f"Error writing user credentials: {str(e)}")
-        return False
+        st.session_state.local_storage["user_credentials"] = credentials
+        return True
 
 def write_downtime_reasons(ws_reasons, reasons: list):
     try:
+        if not st.session_state.api_available:
+            st.session_state.local_storage["downtime_reasons"] = reasons
+            st.success("Downtime reasons saved to local storage (will sync when API available)")
+            return True
+            
         rows = [["Reason"]]
         for reason in reasons:
             rows.append([reason])
-        ws_reasons.clear()
-        ws_reasons.update("A1", rows)
-        ws_reasons.freeze(rows=1)
+        safe_api_call(ws_reasons.clear)
+        safe_api_call(ws_reasons.update, "A1", rows)
+        safe_api_call(ws_reasons.freeze, rows=1)
+        
+        # Update local storage
+        st.session_state.local_storage["downtime_reasons"] = reasons
         
         # Clear cache after update
         cache.clear()
@@ -327,16 +492,25 @@ def write_downtime_reasons(ws_reasons, reasons: list):
         return True
     except Exception as e:
         st.error(f"Error writing downtime reasons: {str(e)}")
-        return False
+        st.session_state.local_storage["downtime_reasons"] = reasons
+        return True
 
 def write_process_steps(ws_steps, steps: list):
     try:
+        if not st.session_state.api_available:
+            st.session_state.local_storage["process_steps"] = steps
+            st.success("Process steps saved to local storage (will sync when API available)")
+            return True
+            
         rows = [["Step"]]
         for step in steps:
             rows.append([step])
-        ws_steps.clear()
-        ws_steps.update("A1", rows)
-        ws_steps.freeze(rows=1)
+        safe_api_call(ws_steps.clear)
+        safe_api_call(ws_steps.update, "A1", rows)
+        safe_api_call(ws_steps.freeze, rows=1)
+        
+        # Update local storage
+        st.session_state.local_storage["process_steps"] = steps
         
         # Clear cache after update
         cache.clear()
@@ -344,7 +518,8 @@ def write_process_steps(ws_steps, steps: list):
         return True
     except Exception as e:
         st.error(f"Error writing process steps: {str(e)}")
-        return False
+        st.session_state.local_storage["process_steps"] = steps
+        return True
 
 def refresh_config_if_needed(ws_config, ws_credentials, ws_reasons, ws_steps):
     """Refresh config from Google Sheets if needed"""
@@ -368,47 +543,90 @@ def refresh_config_if_needed(ws_config, ws_credentials, ws_reasons, ws_steps):
         st.session_state.last_config_update = datetime.now()
 
 # ------------------ Optimized History helpers ------------------
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=120, show_spinner=False)
 def get_recent_production_entries_cached(_ws_production, product: str, limit: int = 10):
     try:
-        values = _ws_production.get_all_values()
-        if len(values) > 1:
-            headers = values[0]
-            data = values[1:limit+1]
-            df = pd.DataFrame(data, columns=headers)
-            if "Product" in df.columns:
-                df = df[df["Product"] == product]
-            return df.sort_values(by="Timestamp", ascending=False).head(limit)
-        return pd.DataFrame()
+        # Combine API data with local storage
+        api_data = pd.DataFrame()
+        if _ws_production and st.session_state.api_available:
+            values = safe_api_call(_ws_production.get_all_values)
+            if values and len(values) > 1:
+                headers = values[0]
+                data = values[1:limit+1]
+                api_data = pd.DataFrame(data, columns=headers)
+        
+        # Get local storage data
+        local_data = pd.DataFrame(st.session_state.local_storage["production"])
+        
+        # Combine and filter
+        if not api_data.empty and not local_data.empty:
+            combined = pd.concat([api_data, local_data], ignore_index=True)
+        elif not api_data.empty:
+            combined = api_data
+        else:
+            combined = local_data
+            
+        if "Product" in combined.columns:
+            combined = combined[combined["Product"] == product]
+        return combined.sort_values(by="Timestamp", ascending=False).head(limit)
     except Exception as e:
         st.error(f"Error loading history: {str(e)}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=120, show_spinner=False)
 def get_recent_downtime_entries_cached(_ws_downtime, limit: int = 10):
     try:
-        values = _ws_downtime.get_all_values()
-        if len(values) > 1:
-            headers = values[0]
-            data = values[1:limit+1]
-            return pd.DataFrame(data, columns=headers)
-        return pd.DataFrame()
+        # Combine API data with local storage
+        api_data = pd.DataFrame()
+        if _ws_downtime and st.session_state.api_available:
+            values = safe_api_call(_ws_downtime.get_all_values)
+            if values and len(values) > 1:
+                headers = values[0]
+                data = values[1:limit+1]
+                api_data = pd.DataFrame(data, columns=headers)
+        
+        # Get local storage data
+        local_data = pd.DataFrame(st.session_state.local_storage["downtime"])
+        
+        # Combine
+        if not api_data.empty and not local_data.empty:
+            combined = pd.concat([api_data, local_data], ignore_index=True)
+        elif not api_data.empty:
+            combined = api_data
+        else:
+            combined = local_data
+            
+        return combined.sort_values(by="Timestamp", ascending=False).head(limit)
     except Exception as e:
         st.error(f"Error loading downtime history: {str(e)}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=120, show_spinner=False)
 def get_recent_quality_entries_cached(_ws_quality, product: str, limit: int = 10):
     try:
-        values = _ws_quality.get_all_values()
-        if len(values) > 1:
-            headers = values[0]
-            data = values[1:limit+1]
-            df = pd.DataFrame(data, columns=headers)
-            if "Product" in df.columns:
-                df = df[df["Product"] == product]
-            return df.sort_values(by="Timestamp", ascending=False).head(limit)
-        return pd.DataFrame()
+        # Combine API data with local storage
+        api_data = pd.DataFrame()
+        if _ws_quality and st.session_state.api_available:
+            values = safe_api_call(_ws_quality.get_all_values)
+            if values and len(values) > 1:
+                headers = values[0]
+                data = values[1:limit+1]
+                api_data = pd.DataFrame(data, columns=headers)
+        
+        # Get local storage data
+        local_data = pd.DataFrame(st.session_state.local_storage["quality"])
+        
+        # Combine and filter
+        if not api_data.empty and not local_data.empty:
+            combined = pd.concat([api_data, local_data], ignore_index=True)
+        elif not api_data.empty:
+            combined = api_data
+        else:
+            combined = local_data
+            
+        if "Product" in combined.columns:
+            combined = combined[combined["Product"] == product]
+        return combined.sort_values(by="Timestamp", ascending=False).head(limit)
     except Exception as e:
         st.error(f"Error loading quality history: {str(e)}")
         return pd.DataFrame()
@@ -424,45 +642,87 @@ def get_recent_quality_entries(ws_quality, product: str, limit: int = 10):
 
 def append_production_record(ws_production, record: dict):
     try:
-        headers = ws_production.row_values(1)
-        row = [record.get(h, "") for h in headers]
-        ws_production.append_row(row, value_input_option="USER_ENTERED")
+        # Always save to local storage first
+        st.session_state.local_storage["production"].append(record)
         
-        # Clear cache after new entry
-        cache.clear()
-        st.cache_data.clear()
+        if not st.session_state.api_available:
+            st.success("Production record saved to local storage (will sync when API available)")
+            return True
+            
+        headers = safe_api_call(ws_production.row_values, 1)
+        if headers:
+            row = [record.get(h, "") for h in headers]
+            success = safe_api_call(ws_production.append_row, row, value_input_option="USER_ENTERED")
+            
+            if success:
+                # Clear cache after new entry
+                cache.clear()
+                st.cache_data.clear()
+                return True
+            else:
+                st.session_state.pending_records["production"].append(record)
+                return True
         return True
     except Exception as e:
         st.error(f"Error saving production record: {str(e)}")
-        return False
+        st.session_state.pending_records["production"].append(record)
+        return True
 
 def append_downtime_record(ws_downtime, record: dict):
     try:
-        headers = ws_downtime.row_values(1)
-        row = [record.get(h, "") for h in headers]
-        ws_downtime.append_row(row, value_input_option="USER_ENTERED")
+        # Always save to local storage first
+        st.session_state.local_storage["downtime"].append(record)
         
-        # Clear cache after new entry
-        cache.clear()
-        st.cache_data.clear()
+        if not st.session_state.api_available:
+            st.success("Downtime record saved to local storage (will sync when API available)")
+            return True
+            
+        headers = safe_api_call(ws_downtime.row_values, 1)
+        if headers:
+            row = [record.get(h, "") for h in headers]
+            success = safe_api_call(ws_downtime.append_row, row, value_input_option="USER_ENTERED")
+            
+            if success:
+                # Clear cache after new entry
+                cache.clear()
+                st.cache_data.clear()
+                return True
+            else:
+                st.session_state.pending_records["downtime"].append(record)
+                return True
         return True
     except Exception as e:
         st.error(f"Error saving downtime record: {str(e)}")
-        return False
+        st.session_state.pending_records["downtime"].append(record)
+        return True
 
 def append_quality_record(ws_quality, record: dict):
     try:
-        headers = ws_quality.row_values(1)
-        row = [record.get(h, "") for h in headers]
-        ws_quality.append_row(row, value_input_option="USER_ENTERED")
+        # Always save to local storage first
+        st.session_state.local_storage["quality"].append(record)
         
-        # Clear cache after new entry
-        cache.clear()
-        st.cache_data.clear()
+        if not st.session_state.api_available:
+            st.success("Quality record saved to local storage (will sync when API available)")
+            return True
+            
+        headers = safe_api_call(ws_quality.row_values, 1)
+        if headers:
+            row = [record.get(h, "") for h in headers]
+            success = safe_api_call(ws_quality.append_row, row, value_input_option="USER_ENTERED")
+            
+            if success:
+                # Clear cache after new entry
+                cache.clear()
+                st.cache_data.clear()
+                return True
+            else:
+                st.session_state.pending_records["quality"].append(record)
+                return True
         return True
     except Exception as e:
         st.error(f"Error saving quality record: {str(e)}")
-        return False
+        st.session_state.pending_records["quality"].append(record)
+        return True
 
 # ------------------ Signature Canvas Component ------------------
 def signature_canvas():
@@ -497,6 +757,13 @@ def signature_canvas():
 # ------------------ Admin UI ------------------
 def admin_ui(ws_config, ws_credentials, ws_reasons, ws_steps):
     st.subheader("Admin Management Panel")
+    
+    # Display API status
+    if not st.session_state.api_available:
+        st.warning("⚠️ Google Sheets API unavailable. Working in offline mode. Data will sync when connection is restored.")
+        if st.button("🔄 Try to Reconnect to Google Sheets"):
+            st.session_state.api_available = True
+            st.rerun()
     
     tabs = st.tabs(["Products & Subtopics", "User Credentials", "Downtime Reasons", "Process Steps", "Quality Team Settings"])
     
@@ -561,7 +828,7 @@ def admin_ui(ws_config, ws_credentials, ws_reasons, ws_steps):
     with tabs[1]:
         st.subheader("Manage User Credentials")
         
-        st.write("Current Users:")
+        st.write(f"Current Users ({len(st.session_state.user_credentials)}/{MAX_USERS}):")
         for username, password in st.session_state.user_credentials.items():
             st.write(f"- {username}: {password}")
         
@@ -570,10 +837,13 @@ def admin_ui(ws_config, ws_credentials, ws_reasons, ws_steps):
             password = st.text_input("Password", type="password", key="edit_password")
             if st.button("Save User Credentials"):
                 if username and password:
-                    st.session_state.user_credentials[username] = password
-                    if write_user_credentials(ws_credentials, st.session_state.user_credentials):
-                        st.success(f"Credentials updated for {username}")
-                        st.rerun()
+                    if len(st.session_state.user_credentials) >= MAX_USERS and username not in st.session_state.user_credentials:
+                        st.error(f"Maximum number of users reached ({MAX_USERS}). Cannot add more users.")
+                    else:
+                        st.session_state.user_credentials[username] = password
+                        if write_user_credentials(ws_credentials, st.session_state.user_credentials):
+                            st.success(f"Credentials updated for {username}")
+                            st.rerun()
         
         with st.expander("Remove User"):
             user_to_remove = st.selectbox("Select user to remove", list(st.session_state.user_credentials.keys()), key="remove_user")
@@ -960,6 +1230,10 @@ def quality_records_ui(ws_quality, ws_config, ws_steps):
 def main_ui(ws_config, ws_production, ws_downtime, ws_quality, ws_credentials, ws_reasons, ws_steps):
     st.title(APP_TITLE)
     
+    # Display API status
+    if not st.session_state.api_available:
+        st.warning("⚠️ Google Sheets API unavailable. Working in offline mode. Data will sync when connection is restored.")
+    
     # Section selection
     st.sidebar.header("Navigation")
     section = st.sidebar.radio(
@@ -983,30 +1257,24 @@ def main_ui(ws_config, ws_production, ws_downtime, ws_quality, ws_credentials, w
 def main():
     st.set_page_config(page_title=APP_TITLE, page_icon="🗂️", layout="wide")
     
-    # Display warning if quota exceeded
-    st.warning("""
-    ⚠️ Google Sheets API quota exceeded. 
-    Some features may be limited. 
-    The app will continue with cached data.
-    """)
-    
     # Initialize Google Sheets client only once
     if st.session_state.gs_client is None:
         with st.spinner("Connecting to Google Sheets..."):
             st.session_state.gs_client = get_gs_client()
-            st.session_state.spreadsheet = open_spreadsheet(st.session_state.gs_client)
+            if st.session_state.gs_client:
+                st.session_state.spreadsheet = open_spreadsheet(st.session_state.gs_client)
     
     try:
         # Get worksheets
-        ws_config = get_worksheet("Config")
-        ws_production = get_worksheet("Production_Quality_Records")
-        ws_downtime = get_worksheet("Machine_Downtime_Records")
-        ws_quality = get_worksheet("Quality_Records")
-        ws_credentials = get_worksheet("User_Credentials")
-        ws_reasons = get_worksheet("Downtime_Reasons")
-        ws_steps = get_worksheet("Process_Steps")
+        ws_config = get_worksheet("Config") if st.session_state.spreadsheet else None
+        ws_production = get_worksheet("Production_Quality_Records") if st.session_state.spreadsheet else None
+        ws_downtime = get_worksheet("Machine_Downtime_Records") if st.session_state.spreadsheet else None
+        ws_quality = get_worksheet("Quality_Records") if st.session_state.spreadsheet else None
+        ws_credentials = get_worksheet("User_Credentials") if st.session_state.spreadsheet else None
+        ws_reasons = get_worksheet("Downtime_Reasons") if st.session_state.spreadsheet else None
+        ws_steps = get_worksheet("Process_Steps") if st.session_state.spreadsheet else None
         
-        # Read config from Google Sheets at startup
+        # Read config from Google Sheets at startup or use local storage
         if not st.session_state.cfg:
             st.session_state.cfg = read_config(ws_config)
         
@@ -1041,4 +1309,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
