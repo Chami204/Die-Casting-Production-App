@@ -37,9 +37,9 @@ DEFAULT_PROCESS_STEPS = [
 ]
 
 DEFAULT_USER_CREDENTIALS = {
-    "operator1": "password1",
-    "operator2": "password2",
-    "operator3": "password3"
+    "Team A": "123",
+    "Team B": "1234",
+    "Team C": "12345"
 }
 
 # Quality section password
@@ -1041,3 +1041,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
