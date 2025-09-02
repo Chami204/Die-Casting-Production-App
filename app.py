@@ -256,6 +256,9 @@ def init_local_excel_file():
 def append_to_local_excel(sheet_name, record):
     """Append a record to the local Excel file"""
     try:
+        # Ensure directory exists
+        DESKTOP_PATH.mkdir(parents=True, exist_ok=True)
+    try:
         # Read existing data
         if LOCAL_EXCEL_FILE.exists():
             existing_df = pd.read_excel(LOCAL_EXCEL_FILE, sheet_name=sheet_name)
@@ -1646,6 +1649,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
