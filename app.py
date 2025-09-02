@@ -104,7 +104,7 @@ DEFAULT_USER_CREDENTIALS = {
 QUALITY_PASSWORD = "quality123"
 
 # ------------------ Local Storage Settings ------------------
-DESKTOP_PATH = Path("C:\Users\chami.gangoda\Downloads")
+DESKTOP_PATH = Path.home() / "Desktop"
 LOCAL_EXCEL_FILE = DESKTOP_PATH / "die_casting_production_data.xlsx"
 LOCAL_BACKUP_INTERVAL = 300  # 5 minutes in seconds
 
@@ -179,9 +179,6 @@ def should_backup_to_local():
 def init_local_excel_file():
     """Initialize the local Excel file with required sheets if it doesn't exist"""
     try:
-        # Ensure directory exists
-        DESKTOP_PATH.mkdir(parents=True, exist_ok=True)
-        
         if not LOCAL_EXCEL_FILE.exists():
             # Create a new Excel file with all required sheets
             with pd.ExcelWriter(LOCAL_EXCEL_FILE, engine='openpyxl') as writer:
@@ -227,31 +224,7 @@ def init_local_excel_file():
         return True
     except Exception as e:
         st.error(f"Error creating local Excel file: {str(e)}")
-        
-        # Try a fallback location if the primary location fails
-        try:
-            fallback_path = Path.cwd() / "data"
-            fallback_path.mkdir(exist_ok=True)
-            fallback_file = fallback_path / "die_casting_production_data.xlsx"
-            
-            with pd.ExcelWriter(fallback_file, engine='openpyxl') as writer:
-                pd.DataFrame().to_excel(writer, sheet_name='Production_Records', index=False)
-                pd.DataFrame().to_excel(writer, sheet_name='Downtime_Records', index=False)
-                pd.DataFrame().to_excel(writer, sheet_name='Quality_Records', index=False)
-                pd.DataFrame().to_excel(writer, sheet_name='Config', index=False)
-                pd.DataFrame().to_excel(writer, sheet_name='User_Credentials', index=False)
-                pd.DataFrame().to_excel(writer, sheet_name='Downtime_Reasons', index=False)
-                pd.DataFrame().to_excel(writer, sheet_name='Process_Steps', index=False)
-            
-            # Update the global variable to use the fallback location
-            global LOCAL_EXCEL_FILE
-            LOCAL_EXCEL_FILE = fallback_file
-            st.success(f"Using fallback location: {fallback_file}")
-            return True
-        except Exception as e2:
-            st.error(f"Failed to create Excel file in fallback location: {str(e2)}")
-            return False
-
+        return False
 
 def append_to_local_excel(sheet_name, record):
     """Append a record to the local Excel file"""
@@ -1646,12 +1619,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
