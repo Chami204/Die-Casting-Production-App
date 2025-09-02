@@ -3,3 +3,10 @@ pandas
 gspread
 google-auth
 graphviz
+openpyxl>=3.1.0
+streamlit>=1.28.0
+pandas>=2.0.0
+gspread>=5.0.0
+google-auth>=2.0.0
+cachetools>=5.0.0
+pytz>=2023.0
