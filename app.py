@@ -160,6 +160,16 @@ if 'last_local_backup' not in st.session_state:
     st.session_state.last_local_backup = None
 
 # ------------------ Helper Functions ------------------
+def periodic_autosave():
+    """Auto-save every 2 minutes"""
+    while True:
+        time.sleep(120)  # 2 minutes
+        try:
+            backup_all_data()
+            print("Auto-save completed successfully")
+        except Exception as e:
+            print(f"Auto-save error: {str(e)}")
+
 
 def ensure_directory_exists(directory_path):
     """Create directory if it doesn't exist"""
@@ -1657,7 +1667,7 @@ def quality_records_ui(ws_quality, ws_config, ws_steps):
 # ------------------ Main UI ------------------
 def main_ui(ws_config, ws_production, ws_downtime, ws_quality, ws_credentials, ws_reasons, ws_steps):
     st.title(APP_TITLE)
-    
+    load_app_state()
     # Display API status
     if not st.session_state.api_available:
         st.warning("⚠️ Google Sheets API unavailable. Working in offline mode. Data will sync when connection is restored.")
@@ -1750,6 +1760,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
