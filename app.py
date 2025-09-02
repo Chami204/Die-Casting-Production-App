@@ -104,7 +104,7 @@ DEFAULT_USER_CREDENTIALS = {
 QUALITY_PASSWORD = "quality123"
 
 # ------------------ Local Storage Settings ------------------
-DESKTOP_PATH = Path("C:/Users/chami.gangoda/Downloads")
+DESKTOP_PATH = Path("C:\Users\chami.gangoda\Downloads\path")
 LOCAL_EXCEL_FILE = DESKTOP_PATH / "die_casting_production_data.xlsx"
 LOCAL_BACKUP_INTERVAL = 300  # 5 minutes in seconds
 
@@ -1619,6 +1619,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
