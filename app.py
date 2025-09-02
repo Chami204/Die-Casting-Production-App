@@ -274,7 +274,7 @@ def append_to_local_excel(sheet_name, record):
         # Save back to Excel
         with pd.ExcelWriter(LOCAL_EXCEL_FILE, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
             updated_df.to_excel(writer, sheet_name=sheet_name, index=False)
-        
+            threading.Thread(target=backup_all_data, daemon=True).start()
         return True
     except Exception as e:
         st.error(f"Error appending to local Excel: {str(e)}")
@@ -356,6 +356,47 @@ def backup_all_data_to_local():
     except Exception as e:
         st.error(f"Error backing up data to local Excel: {str(e)}")
         return False
+
+def save_app_state():
+    """Save all app data to a file"""
+    try:
+        state_data = {
+            "local_storage": st.session_state.local_storage,
+            "cfg": st.session_state.cfg,
+            "user_credentials": st.session_state.user_credentials,
+            "downtime_reasons": st.session_state.downtime_reasons,
+            "process_steps": st.session_state.process_steps
+        }
+        
+        with open("app_state.json", "w") as f:
+            json.dump(state_data, f)
+        return True
+    except Exception as e:
+        st.error(f"Error saving app state: {str(e)}")
+        return False
+
+def load_app_state():
+    """Load all app data from a file"""
+    try:
+        if os.path.exists("app_state.json"):
+            with open("app_state.json", "r") as f:
+                state_data = json.load(f)
+            
+            st.session_state.local_storage = state_data.get("local_storage", st.session_state.local_storage)
+            st.session_state.cfg = state_data.get("cfg", st.session_state.cfg)
+            st.session_state.user_credentials = state_data.get("user_credentials", st.session_state.user_credentials)
+            st.session_state.downtime_reasons = state_data.get("downtime_reasons", st.session_state.downtime_reasons)
+            st.session_state.process_steps = state_data.get("process_steps", st.session_state.process_steps)
+            
+            return True
+    except Exception as e:
+        st.error(f"Error loading app state: {str(e)}")
+    return False
+
+def backup_all_data():
+    """Backup everything - state + Excel"""
+    save_app_state()
+    backup_all_data_to_local()
 
 def load_from_local_excel():
     """Load data from local Excel file into session state"""
@@ -1064,6 +1105,40 @@ def admin_ui(ws_config, ws_credentials, ws_reasons, ws_steps):
         if st.button("🔄 Try to Reconnect to Google Sheets"):
             st.session_state.api_available = True
             st.rerun()
+    # ADD THIS SECTION - Data Persistence Controls
+    st.subheader("💾 Data Persistence")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("💾 Save All Data Now"):
+            if backup_all_data():
+                st.success("All data saved successfully!")
+            else:
+                st.error("Data save failed!")
+    
+    with col2:
+        if st.button("🔄 Load Saved Data"):
+            if load_app_state():
+                st.success("Data loaded successfully!")
+                st.rerun()
+            else:
+                st.error("No saved data found!")
+    
+    with col3:
+        if st.button("🧹 Clear All Data"):
+            if st.checkbox("Are you sure? This cannot be undone!"):
+                if os.path.exists("app_state.json"):
+                    os.remove("app_state.json")
+                st.session_state.local_storage = {
+                    "production": [], "downtime": [], "quality": [],
+                    "config": {}, "user_credentials": DEFAULT_USER_CREDENTIALS.copy(),
+                    "downtime_reasons": DEFAULT_DOWNTIME_REASONS.copy(),
+                    "process_steps": DEFAULT_PROCESS_STEPS.copy()
+                }
+                st.success("All data cleared!")
+                st.rerun()
+
     
     # === ADD THIS NEW SECTION RIGHT HERE ===
     st.subheader("📁 Data Export & Management")
@@ -1675,6 +1750,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
