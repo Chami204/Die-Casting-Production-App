@@ -1065,19 +1065,61 @@ def admin_ui(ws_config, ws_credentials, ws_reasons, ws_steps):
             st.session_state.api_available = True
             st.rerun()
     
-    # Display local file status
+    # === ADD THIS NEW SECTION RIGHT HERE ===
+    st.subheader("📁 Data Export & Management")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if LOCAL_EXCEL_FILE.exists():
+            with open(LOCAL_EXCEL_FILE, "rb") as f:
+                st.download_button(
+                    label="📥 Download Excel File",
+                    data=f,
+                    file_name="die_casting_production_data.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    help="Download the complete data as Excel file"
+                )
+    with col2:
+        if st.button("🔄 Refresh File Info"):
+            st.rerun()
+    
+    # Display file information
+    if LOCAL_EXCEL_FILE.exists():
+        file_size = os.path.getsize(LOCAL_EXCEL_FILE) / 1024  # Size in KB
+        st.info(f"**File location:** `{LOCAL_EXCEL_FILE}`")
+        st.info(f"**File size:** {file_size:.1f} KB")
+        st.info(f"**Last modified:** {datetime.fromtimestamp(os.path.getmtime(LOCAL_EXCEL_FILE)).strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        # Show data preview
+        with st.expander("📊 View Excel File Contents"):
+            try:
+                excel_file = pd.ExcelFile(LOCAL_EXCEL_FILE)
+                sheet_names = excel_file.sheet_names
+                
+                for sheet_name in sheet_names:
+                    with st.expander(f"📋 {sheet_name}"):
+                        df = pd.read_excel(LOCAL_EXCEL_FILE, sheet_name=sheet_name)
+                        if not df.empty:
+                            st.dataframe(df)
+                            st.write(f"Rows: {len(df)}")
+                        else:
+                            st.info("No data in this sheet yet")
+                            
+            except Exception as e:
+                st.error(f"Error reading Excel file: {str(e)}")
+    else:
+        st.warning("Excel file not found yet. It will be created when you add data.")
+    # === END OF NEW SECTION ===
+    
+    # Display local file status (this might already exist in your code)
     if LOCAL_EXCEL_FILE.exists():
         file_size = os.path.getsize(LOCAL_EXCEL_FILE) / 1024  # Size in KB
         st.info(f"📁 Local backup file: {LOCAL_EXCEL_FILE.name} ({file_size:.1f} KB)")
-        
-        if st.button("💾 Backup All Data to Local Excel Now"):
-            if backup_all_data_to_local():
-                st.success("All data backed up to local Excel file!")
     else:
-        st.warning("Local backup file not found. It will be created automatically when needed.")
+        st.info("📁 Local backup file will be created automatically when needed")
     
+    # ... the rest of your existing admin UI code continues here ...
     tabs = st.tabs(["Products & Subtopics", "User Credentials", "Downtime Reasons", "Process Steps", "Quality Team Settings"])
-    
     with tabs[0]:
         st.subheader("Manage Products & Subtopics")
         
@@ -1633,6 +1675,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
