@@ -105,7 +105,7 @@ QUALITY_PASSWORD = "quality123"
 
 # ------------------ Local Storage Settings ------------------
 DESKTOP_PATH = Path("C:/Users/chami.gangoda/OneDrive - Hayleys Group/Desktop")
-LOCAL_EXCEL_FILE = DDESKTOP_PATH / "die_casting_production_data.xlsx"
+LOCAL_EXCEL_FILE = DESKTOP_PATH / "die_casting_production_data.xlsx"
 LOCAL_BACKUP_INTERVAL = 300  # 5 minutes in seconds
 
 # ------------------ Limits ------------------
@@ -1619,3 +1619,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
