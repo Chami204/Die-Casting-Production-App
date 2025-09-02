@@ -9,6 +9,9 @@ import time
 import cachetools
 import json
 from functools import wraps
+import os
+from pathlib import Path
+import openpyxl
 
 # ------------------ Settings ------------------
 APP_TITLE = "Die Casting Production"
@@ -100,6 +103,11 @@ DEFAULT_USER_CREDENTIALS = {
 # Quality section password
 QUALITY_PASSWORD = "quality123"
 
+# ------------------ Local Storage Settings ------------------
+DESKTOP_PATH = Path("C:/Users/chami.gangoda/OneDrive - Hayleys Group/Desktop")
+LOCAL_EXCEL_FILE = DDESKTOP_PATH / "die_casting_production_data.xlsx"
+LOCAL_BACKUP_INTERVAL = 300  # 5 minutes in seconds
+
 # ------------------ Limits ------------------
 MAX_USERS = 20  # Limited to 10 users
 
@@ -147,6 +155,8 @@ if 'local_storage' not in st.session_state:
         "downtime_reasons": DEFAULT_DOWNTIME_REASONS.copy(),
         "process_steps": DEFAULT_PROCESS_STEPS.copy()
     }
+if 'last_local_backup' not in st.session_state:
+    st.session_state.last_local_backup = None
 
 # ------------------ Helper Functions ------------------
 def get_sri_lanka_time():
@@ -158,6 +168,244 @@ def should_refresh_config():
     if st.session_state.last_config_update is None:
         return True
     return (datetime.now() - st.session_state.last_config_update).total_seconds() > 60
+
+def should_backup_to_local():
+    """Check if local backup should be performed"""
+    if st.session_state.last_local_backup is None:
+        return True
+    return (datetime.now() - st.session_state.last_local_backup).total_seconds() > LOCAL_BACKUP_INTERVAL
+
+# ------------------ Local Excel File Operations ------------------
+def init_local_excel_file():
+    """Initialize the local Excel file with required sheets if it doesn't exist"""
+    try:
+        if not LOCAL_EXCEL_FILE.exists():
+            # Create a new Excel file with all required sheets
+            with pd.ExcelWriter(LOCAL_EXCEL_FILE, engine='openpyxl') as writer:
+                # Production sheet
+                production_df = pd.DataFrame(columns=[
+                    "RecordType", "EntryID", "Timestamp", "Shift", "Team", "Machine", 
+                    "Product", "Operator", "Comments"
+                ] + DEFAULT_SUBTOPICS)
+                production_df.to_excel(writer, sheet_name='Production_Records', index=False)
+                
+                # Downtime sheet
+                downtime_df = pd.DataFrame(columns=[
+                    "EntryID", "Timestamp", "Shift", "Team", "Machine", "Planned_Item", 
+                    "Downtime_Reason", "Other_Comments", "Duration_Min"
+                ])
+                downtime_df.to_excel(writer, sheet_name='Downtime_Records', index=False)
+                
+                # Quality sheet
+                quality_df = pd.DataFrame(columns=[
+                    "EntryID", "Timestamp", "Process_Step", "Product", "Total_Lot_Qty", 
+                    "Sample_Size", "AQL_Level", "Accept_Reject", "Defects_Found", 
+                    "Results", "Quality_Inspector", "ETF_Number", "Digital_Signature", "Comments"
+                ])
+                quality_df.to_excel(writer, sheet_name='Quality_Records', index=False)
+                
+                # Config sheet
+                config_df = pd.DataFrame(columns=["Product", "Subtopic"])
+                config_df.to_excel(writer, sheet_name='Config', index=False)
+                
+                # User credentials sheet
+                user_df = pd.DataFrame(columns=["Username", "Password", "Role"])
+                user_df.to_excel(writer, sheet_name='User_Credentials', index=False)
+                
+                # Downtime reasons sheet
+                reasons_df = pd.DataFrame(columns=["Reason"])
+                reasons_df.to_excel(writer, sheet_name='Downtime_Reasons', index=False)
+                
+                # Process steps sheet
+                steps_df = pd.DataFrame(columns=["Step"])
+                steps_df.to_excel(writer, sheet_name='Process_Steps', index=False)
+            
+            st.success(f"Created local Excel file: {LOCAL_EXCEL_FILE}")
+        return True
+    except Exception as e:
+        st.error(f"Error creating local Excel file: {str(e)}")
+        return False
+
+def append_to_local_excel(sheet_name, record):
+    """Append a record to the local Excel file"""
+    try:
+        # Read existing data
+        if LOCAL_EXCEL_FILE.exists():
+            existing_df = pd.read_excel(LOCAL_EXCEL_FILE, sheet_name=sheet_name)
+        else:
+            # Create empty DataFrame with correct columns
+            if sheet_name == 'Production_Records':
+                existing_df = pd.DataFrame(columns=[
+                    "RecordType", "EntryID", "Timestamp", "Shift", "Team", "Machine", 
+                    "Product", "Operator", "Comments"
+                ] + DEFAULT_SUBTOPICS)
+            elif sheet_name == 'Downtime_Records':
+                existing_df = pd.DataFrame(columns=[
+                    "EntryID", "Timestamp", "Shift", "Team", "Machine", "Planned_Item", 
+                    "Downtime_Reason", "Other_Comments", "Duration_Min"
+                ])
+            elif sheet_name == 'Quality_Records':
+                existing_df = pd.DataFrame(columns=[
+                    "EntryID", "Timestamp", "Process_Step", "Product", "Total_Lot_Qty", 
+                    "Sample_Size", "AQL_Level", "Accept_Reject", "Defects_Found", 
+                    "Results", "Quality_Inspector", "ETF_Number", "Digital_Signature", "Comments"
+                ])
+            else:
+                return False
+        
+        # Convert record to DataFrame and append
+        new_row = pd.DataFrame([record])
+        updated_df = pd.concat([existing_df, new_row], ignore_index=True)
+        
+        # Save back to Excel
+        with pd.ExcelWriter(LOCAL_EXCEL_FILE, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
+            updated_df.to_excel(writer, sheet_name=sheet_name, index=False)
+        
+        return True
+    except Exception as e:
+        st.error(f"Error appending to local Excel: {str(e)}")
+        return False
+
+def read_local_excel(sheet_name):
+    """Read data from local Excel file"""
+    try:
+        if LOCAL_EXCEL_FILE.exists():
+            return pd.read_excel(LOCAL_EXCEL_FILE, sheet_name=sheet_name)
+        return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Error reading local Excel: {str(e)}")
+        return pd.DataFrame()
+
+def update_local_excel_sheet(sheet_name, data):
+    """Update an entire sheet in the local Excel file"""
+    try:
+        # Read the entire Excel file first
+        if LOCAL_EXCEL_FILE.exists():
+            with pd.ExcelWriter(LOCAL_EXCEL_FILE, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
+                data.to_excel(writer, sheet_name=sheet_name, index=False)
+            return True
+        return False
+    except Exception as e:
+        st.error(f"Error updating local Excel: {str(e)}")
+        return False
+
+def backup_all_data_to_local():
+    """Backup all data to local Excel file"""
+    try:
+        # Initialize if needed
+        init_local_excel_file()
+        
+        # Backup production records
+        production_df = pd.DataFrame(st.session_state.local_storage["production"])
+        if not production_df.empty:
+            update_local_excel_sheet('Production_Records', production_df)
+        
+        # Backup downtime records
+        downtime_df = pd.DataFrame(st.session_state.local_storage["downtime"])
+        if not downtime_df.empty:
+            update_local_excel_sheet('Downtime_Records', downtime_df)
+        
+        # Backup quality records
+        quality_df = pd.DataFrame(st.session_state.local_storage["quality"])
+        if not quality_df.empty:
+            update_local_excel_sheet('Quality_Records', quality_df)
+        
+        # Backup config
+        config_rows = []
+        for product, subs in st.session_state.local_storage["config"].items():
+            for s in subs:
+                config_rows.append({"Product": product, "Subtopic": s})
+        config_df = pd.DataFrame(config_rows)
+        if not config_df.empty:
+            update_local_excel_sheet('Config', config_df)
+        
+        # Backup user credentials
+        user_rows = []
+        for username, password in st.session_state.local_storage["user_credentials"].items():
+            user_rows.append({"Username": username, "Password": password, "Role": "Operator"})
+        user_df = pd.DataFrame(user_rows)
+        if not user_df.empty:
+            update_local_excel_sheet('User_Credentials', user_df)
+        
+        # Backup downtime reasons
+        reasons_df = pd.DataFrame({"Reason": st.session_state.local_storage["downtime_reasons"]})
+        if not reasons_df.empty:
+            update_local_excel_sheet('Downtime_Reasons', reasons_df)
+        
+        # Backup process steps
+        steps_df = pd.DataFrame({"Step": st.session_state.local_storage["process_steps"]})
+        if not steps_df.empty:
+            update_local_excel_sheet('Process_Steps', steps_df)
+        
+        st.session_state.last_local_backup = datetime.now()
+        return True
+    except Exception as e:
+        st.error(f"Error backing up data to local Excel: {str(e)}")
+        return False
+
+def load_from_local_excel():
+    """Load data from local Excel file into session state"""
+    try:
+        if not LOCAL_EXCEL_FILE.exists():
+            return False
+        
+        # Load production records
+        production_df = read_local_excel('Production_Records')
+        if not production_df.empty:
+            st.session_state.local_storage["production"] = production_df.to_dict('records')
+        
+        # Load downtime records
+        downtime_df = read_local_excel('Downtime_Records')
+        if not downtime_df.empty:
+            st.session_state.local_storage["downtime"] = downtime_df.to_dict('records')
+        
+        # Load quality records
+        quality_df = read_local_excel('Quality_Records')
+        if not quality_df.empty:
+            st.session_state.local_storage["quality"] = quality_df.to_dict('records')
+        
+        # Load config
+        config_df = read_local_excel('Config')
+        if not config_df.empty:
+            cfg = {}
+            for _, row in config_df.iterrows():
+                p = str(row["Product"]).strip()
+                s = str(row["Subtopic"]).strip()
+                if p and s:
+                    cfg.setdefault(p, []).append(s)
+            st.session_state.local_storage["config"] = cfg
+            st.session_state.cfg = cfg
+        
+        # Load user credentials
+        user_df = read_local_excel('User_Credentials')
+        if not user_df.empty:
+            credentials = {}
+            for _, row in user_df.iterrows():
+                username = str(row["Username"]).strip()
+                password = str(row["Password"]).strip()
+                if username and password:
+                    credentials[username] = password
+            st.session_state.local_storage["user_credentials"] = credentials
+            st.session_state.user_credentials = credentials
+        
+        # Load downtime reasons
+        reasons_df = read_local_excel('Downtime_Reasons')
+        if not reasons_df.empty:
+            reasons = [str(row["Reason"]).strip() for _, row in reasons_df.iterrows() if str(row["Reason"]).strip()]
+            st.session_state.local_storage["downtime_reasons"] = reasons
+            st.session_state.downtime_reasons = reasons
+        
+        # Load process steps
+        steps_df = read_local_excel('Process_Steps')
+        if not steps_df.empty:
+            steps = [str(row["Step"]).strip() for _, row in steps_df.iterrows() if str(row["Step"]).strip()]
+            st.session_state.local_storage["process_steps"] = steps
+            st.session_state.process_steps = steps
+        
+        return True
+    except Exception as e:
+        st.error(f"Error loading from local Excel: {str(e)}")
+        return False
 
 # ------------------ Rate Limiting Decorator ------------------
 def rate_limited(max_per_minute):
@@ -422,6 +670,8 @@ def write_config(ws_config, cfg: dict):
         if not st.session_state.api_available:
             st.session_state.local_storage["config"] = cfg
             st.success("Config saved to local storage (will sync when API available)")
+            # Also save to local Excel
+            backup_all_data_to_local()
             return True
             
         rows = [["Product", "Subtopic"]]
@@ -435,6 +685,9 @@ def write_config(ws_config, cfg: dict):
         # Update local storage
         st.session_state.local_storage["config"] = cfg
         
+        # Also save to local Excel
+        backup_all_data_to_local()
+        
         # Clear cache after update
         cache.clear()
         st.cache_data.clear()
@@ -442,6 +695,8 @@ def write_config(ws_config, cfg: dict):
     except Exception as e:
         st.error(f"Error writing config: {str(e)}")
         st.session_state.local_storage["config"] = cfg
+        # Also save to local Excel
+        backup_all_data_to_local()
         return True
 
 def write_user_credentials(ws_credentials, credentials: dict):
@@ -449,6 +704,8 @@ def write_user_credentials(ws_credentials, credentials: dict):
         if not st.session_state.api_available:
             st.session_state.local_storage["user_credentials"] = credentials
             st.success("User credentials saved to local storage (will sync when API available)")
+            # Also save to local Excel
+            backup_all_data_to_local()
             return True
             
         rows = [["Username", "Password", "Role"]]
@@ -461,6 +718,9 @@ def write_user_credentials(ws_credentials, credentials: dict):
         # Update local storage
         st.session_state.local_storage["user_credentials"] = credentials
         
+        # Also save to local Excel
+        backup_all_data_to_local()
+        
         # Clear cache after update
         cache.clear()
         st.cache_data.clear()
@@ -468,6 +728,8 @@ def write_user_credentials(ws_credentials, credentials: dict):
     except Exception as e:
         st.error(f"Error writing user credentials: {str(e)}")
         st.session_state.local_storage["user_credentials"] = credentials
+        # Also save to local Excel
+        backup_all_data_to_local()
         return True
 
 def write_downtime_reasons(ws_reasons, reasons: list):
@@ -475,6 +737,8 @@ def write_downtime_reasons(ws_reasons, reasons: list):
         if not st.session_state.api_available:
             st.session_state.local_storage["downtime_reasons"] = reasons
             st.success("Downtime reasons saved to local storage (will sync when API available)")
+            # Also save to local Excel
+            backup_all_data_to_local()
             return True
             
         rows = [["Reason"]]
@@ -487,6 +751,9 @@ def write_downtime_reasons(ws_reasons, reasons: list):
         # Update local storage
         st.session_state.local_storage["downtime_reasons"] = reasons
         
+        # Also save to local Excel
+        backup_all_data_to_local()
+        
         # Clear cache after update
         cache.clear()
         st.cache_data.clear()
@@ -494,6 +761,8 @@ def write_downtime_reasons(ws_reasons, reasons: list):
     except Exception as e:
         st.error(f"Error writing downtime reasons: {str(e)}")
         st.session_state.local_storage["downtime_reasons"] = reasons
+        # Also save to local Excel
+        backup_all_data_to_local()
         return True
 
 def write_process_steps(ws_steps, steps: list):
@@ -501,6 +770,8 @@ def write_process_steps(ws_steps, steps: list):
         if not st.session_state.api_available:
             st.session_state.local_storage["process_steps"] = steps
             st.success("Process steps saved to local storage (will sync when API available)")
+            # Also save to local Excel
+            backup_all_data_to_local()
             return True
             
         rows = [["Step"]]
@@ -513,6 +784,9 @@ def write_process_steps(ws_steps, steps: list):
         # Update local storage
         st.session_state.local_storage["process_steps"] = steps
         
+        # Also save to local Excel
+        backup_all_data_to_local()
+        
         # Clear cache after update
         cache.clear()
         st.cache_data.clear()
@@ -520,6 +794,8 @@ def write_process_steps(ws_steps, steps: list):
     except Exception as e:
         st.error(f"Error writing process steps: {str(e)}")
         st.session_state.local_storage["process_steps"] = steps
+        # Also save to local Excel
+        backup_all_data_to_local()
         return True
 
 def refresh_config_if_needed(ws_config, ws_credentials, ws_reasons, ws_steps):
@@ -646,8 +922,11 @@ def append_production_record(ws_production, record: dict):
         # Always save to local storage first
         st.session_state.local_storage["production"].append(record)
         
+        # Always save to local Excel file
+        append_to_local_excel('Production_Records', record)
+        
         if not st.session_state.api_available:
-            st.success("Production record saved to local storage (will sync when API available)")
+            st.success("Production record saved to local storage and Excel file")
             return True
             
         headers = safe_api_call(ws_production.row_values, 1)
@@ -674,8 +953,11 @@ def append_downtime_record(ws_downtime, record: dict):
         # Always save to local storage first
         st.session_state.local_storage["downtime"].append(record)
         
+        # Always save to local Excel file
+        append_to_local_excel('Downtime_Records', record)
+        
         if not st.session_state.api_available:
-            st.success("Downtime record saved to local storage (will sync when API available)")
+            st.success("Downtime record saved to local storage and Excel file")
             return True
             
         headers = safe_api_call(ws_downtime.row_values, 1)
@@ -702,8 +984,11 @@ def append_quality_record(ws_quality, record: dict):
         # Always save to local storage first
         st.session_state.local_storage["quality"].append(record)
         
+        # Always save to local Excel file
+        append_to_local_excel('Quality_Records', record)
+        
         if not st.session_state.api_available:
-            st.success("Quality record saved to local storage (will sync when API available)")
+            st.success("Quality record saved to local storage and Excel file")
             return True
             
         headers = safe_api_call(ws_quality.row_values, 1)
@@ -765,6 +1050,17 @@ def admin_ui(ws_config, ws_credentials, ws_reasons, ws_steps):
         if st.button("🔄 Try to Reconnect to Google Sheets"):
             st.session_state.api_available = True
             st.rerun()
+    
+    # Display local file status
+    if LOCAL_EXCEL_FILE.exists():
+        file_size = os.path.getsize(LOCAL_EXCEL_FILE) / 1024  # Size in KB
+        st.info(f"📁 Local backup file: {LOCAL_EXCEL_FILE.name} ({file_size:.1f} KB)")
+        
+        if st.button("💾 Backup All Data to Local Excel Now"):
+            if backup_all_data_to_local():
+                st.success("All data backed up to local Excel file!")
+    else:
+        st.warning("Local backup file not found. It will be created automatically when needed.")
     
     tabs = st.tabs(["Products & Subtopics", "User Credentials", "Downtime Reasons", "Process Steps", "Quality Team Settings"])
     
@@ -1235,6 +1531,13 @@ def main_ui(ws_config, ws_production, ws_downtime, ws_quality, ws_credentials, w
     if not st.session_state.api_available:
         st.warning("⚠️ Google Sheets API unavailable. Working in offline mode. Data will sync when connection is restored.")
     
+    # Display local backup status
+    if LOCAL_EXCEL_FILE.exists():
+        file_size = os.path.getsize(LOCAL_EXCEL_FILE) / 1024  # Size in KB
+        st.info(f"📁 Local backup file: {LOCAL_EXCEL_FILE.name} ({file_size:.1f} KB)")
+    else:
+        st.info("📁 Local backup file will be created automatically when needed")
+    
     # Section selection
     st.sidebar.header("Navigation")
     section = st.sidebar.radio(
@@ -1257,6 +1560,12 @@ def main_ui(ws_config, ws_production, ws_downtime, ws_quality, ws_credentials, w
 # ------------------ Main ------------------
 def main():
     st.set_page_config(page_title=APP_TITLE, page_icon="🗂️", layout="wide")
+    
+    # Initialize local Excel file
+    init_local_excel_file()
+    
+    # Load data from local Excel file if available
+    load_from_local_excel()
     
     # Initialize Google Sheets client only once
     if st.session_state.gs_client is None:
