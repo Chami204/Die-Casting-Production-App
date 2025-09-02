@@ -100,7 +100,7 @@ DEFAULT_USER_CREDENTIALS = {
 QUALITY_PASSWORD = "quality123"
 
 # ------------------ Limits ------------------
-MAX_USERS = 10  # Limited to 10 users
+MAX_USERS = 20  # Limited to 10 users
 
 # ------------------ Cache Setup ------------------
 cache = cachetools.TTLCache(maxsize=100, ttl=120)  # Increased TTL to reduce API calls
@@ -1309,4 +1309,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
