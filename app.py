@@ -5,6 +5,9 @@ from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 import pytz
+import time
+import threading
+from functools import lru_cache
 
 # ------------------ Settings ------------------
 APP_TITLE = "Die Casting Production"
@@ -33,6 +36,36 @@ QUALITY_DEFAULT_FIELDS = [
     "Digital_Signature"
 ]
 
+# ------------------ Rate Limiter ------------------
+class RateLimiter:
+    def __init__(self, max_calls, period):
+        self.max_calls = max_calls
+        self.period = period
+        self.calls = []
+        self.lock = threading.Lock()
+    
+    def __call__(self, func):
+        def wrapper(*args, **kwargs):
+            with self.lock:
+                now = time.time()
+                # Remove calls that are older than the period
+                self.calls = [call for call in self.calls if now - call < self.period]
+                
+                if len(self.calls) >= self.max_calls:
+                    sleep_time = self.period - (now - self.calls[0])
+                    if sleep_time > 0:
+                        time.sleep(sleep_time)
+                        now = time.time()
+                        self.calls = [call for call in self.calls if now - call < self.period]
+                
+                self.calls.append(now)
+            
+            return func(*args, **kwargs)
+        return wrapper
+
+# Create rate limiter instances
+read_limiter = RateLimiter(max_calls=55, period=60)  # 55 reads per minute (safe limit)
+write_limiter = RateLimiter(max_calls=55, period=60)  # 55 writes per minute
 
 # ------------------ User Management ------------------
 def read_users_config(ws_users):
@@ -84,6 +117,8 @@ if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 if 'user_role' not in st.session_state:
     st.session_state.user_role = ""
+if 'api_calls' not in st.session_state:
+    st.session_state.api_calls = {'read': 0, 'write': 0, 'last_reset': time.time()}
 
 # ------------------ Helper Functions ------------------
 def get_sri_lanka_time():
@@ -91,10 +126,41 @@ def get_sri_lanka_time():
     return datetime.now(SRI_LANKA_TZ).strftime(TIME_FORMAT)
 
 def should_refresh_config():
-    """Check if config should be refreshed (every 5 seconds)"""
+    """Check if config should be refreshed with longer interval"""
     if st.session_state.last_config_update is None:
         return True
-    return (datetime.now() - st.session_state.last_config_update).total_seconds() > 5
+    # Increase from 5 seconds to 30 seconds to reduce API calls
+    return (datetime.now() - st.session_state.last_config_update).total_seconds() > 30
+
+def safe_sheet_operation(operation, *args, **kwargs):
+    """Safe wrapper for sheet operations with retry logic"""
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            result = operation(*args, **kwargs)
+            return result
+        except Exception as e:
+            if "quota" in str(e).lower() or "429" in str(e):
+                wait_time = (attempt + 1) * 5  # Exponential backoff
+                time.sleep(wait_time)
+                continue
+            else:
+                raise e
+    raise Exception(f"Failed after {max_retries} attempts")
+
+def track_usage(call_type):
+    """Track API usage and show warnings"""
+    current_time = time.time()
+    if current_time - st.session_state.api_calls['last_reset'] > 60:
+        st.session_state.api_calls = {'read': 0, 'write': 0, 'last_reset': current_time}
+    
+    st.session_state.api_calls[call_type] += 1
+    
+    # Show warning when approaching limits
+    if st.session_state.api_calls['read'] > 45:
+        st.sidebar.warning("⚠️ Approaching read limit")
+    if st.session_state.api_calls['write'] > 45:
+        st.sidebar.warning("⚠️ Approaching write limit")
 
 # ------------------ Google Sheets ------------------
 def get_gs_client():
@@ -119,7 +185,7 @@ def get_gs_client():
             "token_uri": st.secrets["gcp_service_account"]["token_uri"],
             "auth_provider_x509_cert_url": st.secrets["gcp_service_account"]["auth_provider_x509_cert_url"],
             "client_x509_cert_url": st.secrets["gcp_service_account"]["client_x509_cert_url"]
-        }
+        ]
         
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         return gspread.authorize(creds)
@@ -136,60 +202,43 @@ def open_spreadsheet(client):
         st.stop()
 
 def ensure_worksheets(sh):
-    # Production Config sheet
-    try:
-        ws_config = sh.worksheet("Production_Config")
-    except gspread.WorksheetNotFound:
-        ws_config = sh.add_worksheet(title="Production_Config", rows=1000, cols=2)
-        rows = [["Product", "Subtopic"]]
-        ws_config.update("A1", rows)
-        ws_config.freeze(rows=1)
-
-    # Quality Config sheet
-    try:
-        ws_quality_config = sh.worksheet("Quality_Config")
-    except gspread.WorksheetNotFound:
-        ws_quality_config = sh.add_worksheet(title="Quality_Config", rows=1000, cols=2)
-        rows = [["Field", "Type"]]
-        ws_quality_config.update("A1", rows)
-        ws_quality_config.freeze(rows=1)
-
-    # Users Config sheet
-    try:
-        ws_users = sh.worksheet("User_Credentials")
-    except gspread.WorksheetNotFound:
-        ws_users = sh.add_worksheet(title="User_Credentials", rows=1000, cols=3)
-        rows = [["Username", "Password", "Role"]]
-        ws_users.update("A1", rows)
-        ws_users.freeze(rows=1)
-
-    # History sheet
-    try:
-        ws_history = sh.worksheet("History")
-        headers = ws_history.row_values(1)
-        if "User" not in headers:
-            new_headers = ["User"] + headers
-            ws_history.update("A1", [new_headers])
-    except gspread.WorksheetNotFound:
-        ws_history = sh.add_worksheet(title = "History", rows=2000, cols=50)
-        headers = ["User", "EntryID", "Timestamp", "Product", "Comments"] + DEFAULT_SUBTOPICS
-        ws_history.update("A1", [headers])
-        ws_history.freeze(rows=1)
-
-    # Quality History sheet
-    try:
-        ws_quality_history = sh.worksheet("Quality_History")
-    except gspread.WorksheetNotFound:
-        ws_quality_history = sh.add_worksheet(title="Quality_History", rows=2000, cols=50)
-        headers = ["User", "EntryID", "Timestamp", "Product"] + QUALITY_DEFAULT_FIELDS
-        ws_quality_history.update("A1", [headers])
-        ws_quality_history.freeze(rows=1)
-
-    return ws_config, ws_history, ws_users, ws_quality_config, ws_quality_history
+    worksheets = {}
+    sheet_configs = [
+        ("Production_Config", 1000, 2, [["Product", "Subtopic"]]),
+        ("Quality_Config", 1000, 2, [["Field", "Type"]]),
+        ("User_Credentials", 1000, 3, [["Username", "Password", "Role"]]),
+        ("History", 2000, 50, [["User", "EntryID", "Timestamp", "Product", "Comments"] + DEFAULT_SUBTOPICS]),
+        ("Quality_History", 2000, 50, [["User", "EntryID", "Timestamp", "Product"] + QUALITY_DEFAULT_FIELDS])
+    ]
+    
+    for sheet_name, rows, cols, headers in sheet_configs:
+        try:
+            worksheet = sh.worksheet(sheet_name)
+            worksheets[sheet_name] = worksheet
+        except gspread.WorksheetNotFound:
+            try:
+                worksheet = sh.add_worksheet(title=sheet_name, rows=rows, cols=cols)
+                worksheet.update("A1", headers)
+                worksheet.freeze(rows=1)
+                worksheets[sheet_name] = worksheet
+                time.sleep(1)  # Delay between sheet creations
+            except Exception as e:
+                st.error(f"Error creating {sheet_name}: {str(e)}")
+                continue
+    
+    return (
+        worksheets.get("Production_Config"),
+        worksheets.get("History"),
+        worksheets.get("User_Credentials"),
+        worksheets.get("Quality_Config"),
+        worksheets.get("Quality_History")
+    )
 
 # ------------------ Config helpers ------------------
+@read_limiter
 def read_config(ws_config):
     try:
+        track_usage('read')
         values = ws_config.get_all_records()
         cfg = {}
         for row in values:
@@ -203,8 +252,10 @@ def read_config(ws_config):
         st.error(f"Error reading config: {str(e)}")
         return {}
 
+@write_limiter
 def write_config(ws_config, cfg: dict):
     try:
+        track_usage('write')
         rows = [["Product", "Subtopic"]]
         for product, subs in cfg.items():
             for s in subs:
@@ -216,6 +267,29 @@ def write_config(ws_config, cfg: dict):
     except Exception as e:
         st.error(f"Error writing config: {str(e)}")
         return False
+
+@read_limiter
+def read_users_config_cached(ws_users):
+    """Cached version of read_users_config"""
+    track_usage('read')
+    return read_users_config(ws_users)
+
+@read_limiter
+def read_quality_config(ws_quality_config):
+    """Read quality configuration from Google Sheets"""
+    try:
+        track_usage('read')
+        values = ws_quality_config.get_all_records()
+        quality_fields = {}
+        for row in values:
+            field = str(row.get("Field", "")).strip()
+            field_type = str(row.get("Type", "")).strip()
+            if field:
+                quality_fields[field] = field_type
+        return quality_fields
+    except Exception as e:
+        st.error(f"Error reading quality config: {str(e)}")
+        return {field: "text" for field in QUALITY_DEFAULT_FIELDS}
 
 def add_product_with_default_subtopics(ws_config, product_name):
     """Add a new product with all default subtopics"""
@@ -237,25 +311,13 @@ def add_product_with_default_subtopics(ws_config, product_name):
 def refresh_config_if_needed(ws_config):
     """Refresh config from Google Sheets if needed"""
     if should_refresh_config():
-        new_cfg = read_config(ws_config)
-        if new_cfg != st.session_state.cfg:
-            st.session_state.cfg = new_cfg
-        st.session_state.last_config_update = datetime.now()
-
-def read_quality_config(ws_quality_config):
-    """Read quality configuration from Google Sheets"""
-    try:
-        values = ws_quality_config.get_all_records()
-        quality_fields = {}
-        for row in values:
-            field = str(row.get("Field", "")).strip()
-            field_type = str(row.get("Type", "")).strip()
-            if field:
-                quality_fields[field] = field_type
-        return quality_fields
-    except Exception as e:
-        st.error(f"Error reading quality config: {str(e)}")
-        return {field: "text" for field in QUALITY_DEFAULT_FIELDS}
+        try:
+            new_cfg = safe_sheet_operation(read_config, ws_config)
+            if new_cfg != st.session_state.cfg:
+                st.session_state.cfg = new_cfg
+            st.session_state.last_config_update = datetime.now()
+        except Exception as e:
+            st.warning(f"Config refresh delayed due to rate limiting: {str(e)}")
 
 def ensure_quality_history_headers(ws_quality_history, quality_fields):
     """Ensure quality history sheet has correct headers"""
@@ -267,11 +329,18 @@ def ensure_quality_history_headers(ws_quality_history, quality_fields):
         ws_quality_history.freeze(rows=1)
     return needed_headers
 
+@write_limiter
 def append_quality_history(ws_quality_history, record: dict, quality_fields):
     """Append record to quality history"""
-    headers = ensure_quality_history_headers(ws_quality_history, quality_fields)
-    row = [record.get(h, "") for h in headers]
-    ws_quality_history.append_row(row, value_input_option="USER_ENTERED")
+    try:
+        track_usage('write')
+        headers = ensure_quality_history_headers(ws_quality_history, quality_fields)
+        row = [record.get(h, "") for h in headers]
+        ws_quality_history.append_row(row, value_input_option="USER_ENTERED")
+        return True
+    except Exception as e:
+        st.error(f"Error appending quality history: {str(e)}")
+        return False
 
 # ------------------ History helpers ------------------
 def ensure_history_headers(ws_history, product):
@@ -284,13 +353,22 @@ def ensure_history_headers(ws_history, product):
         ws_history.freeze(rows=1)
     return needed_headers
 
+@write_limiter
 def append_history(ws_history, record: dict):
-    headers = ensure_history_headers(ws_history, record["Product"])
-    row = [record.get(h, "") for h in headers]
-    ws_history.append_row(row, value_input_option="USER_ENTERED")
+    try:
+        track_usage('write')
+        headers = ensure_history_headers(ws_history, record["Product"])
+        row = [record.get(h, "") for h in headers]
+        ws_history.append_row(row, value_input_option="USER_ENTERED")
+        return True
+    except Exception as e:
+        st.error(f"Error appending history: {str(e)}")
+        return False
 
+@read_limiter
 def get_recent_entries(ws_history, product: str, limit: int = 50) -> pd.DataFrame:
     try:
+        track_usage('read')
         values = ws_history.get_all_records()
         if not values:
             return pd.DataFrame()
@@ -302,9 +380,11 @@ def get_recent_entries(ws_history, product: str, limit: int = 50) -> pd.DataFram
         st.error(f"Error loading history: {str(e)}")
         return pd.DataFrame()
 
+@write_limiter
 def update_entry(ws_history, entry_id: str, updated_data: dict):
     """Update an existing entry in the history sheet"""
     try:
+        track_usage('write')
         # Find the row with the matching EntryID
         cell = ws_history.find(entry_id)
         if not cell:
@@ -332,9 +412,11 @@ def update_entry(ws_history, entry_id: str, updated_data: dict):
         st.error(f"Error updating entry: {str(e)}")
         return False
 
+@read_limiter
 def find_entry_by_id(ws_history, entry_id: str) -> dict:
     """Find an entry by its ID and return as dictionary"""
     try:
+        track_usage('read')
         cell = ws_history.find(entry_id)
         if not cell:
             return None
@@ -353,7 +435,6 @@ def find_entry_by_id(ws_history, entry_id: str) -> dict:
     except Exception as e:
         st.error(f"Error finding entry: {str(e)}")
         return None
-
 
 # ------------------ Login System ------------------
 def login_system(ws_users):
@@ -387,7 +468,7 @@ def login_system(ws_users):
     st.sidebar.subheader("Production/Admin Login")
     
     # Read users from sheet
-    users = read_users_config(ws_users)
+    users = safe_sheet_operation(read_users_config_cached, ws_users)
     
     if not users:
         st.sidebar.info("No production users configured.")
@@ -454,7 +535,7 @@ def admin_ui(ws_config, ws_users):
         st.info("Edit the 'User_Credentials' sheet in Google Sheets to add/remove users.")
         
         # Display current users
-        users = read_users_config(ws_users)
+        users = safe_sheet_operation(read_users_config_cached, ws_users)
         if users:
             st.write("Current Users:")
             for username, user_data in users.items():
@@ -474,25 +555,37 @@ def admin_ui(ws_config, ws_users):
                         "password": new_password,
                         "role": new_role
                     }
-                    if write_users_config(ws_users, users):
+                    if safe_sheet_operation(write_users_config, ws_users, users):
                         st.success(f"User '{new_username}' added successfully!")
                         st.rerun()
                 else:
                     st.warning("Please provide both username and password.")
 
-    # Manual refresh button
+    # Manual refresh button with cooldown
     if st.button("🔄 Refresh Configuration"):
-        st.session_state.last_config_update = None
-        st.rerun()
+        last_refresh = st.session_state.get('last_manual_refresh', 0)
+        current_time = time.time()
+        if current_time - last_refresh > 30:  # 30 second cooldown
+            st.session_state.last_config_update = None
+            st.session_state.last_manual_refresh = current_time
+            st.rerun()
+        else:
+            st.warning("Please wait before refreshing again")
 
 # ------------------ Production UI ------------------
 def production_ui(ws_config, ws_history):
     st.subheader(f"Production Data Entry - User: {st.session_state.current_user}")
     
-    # Manual refresh button
+    # Manual refresh button with cooldown
     if st.button("🔄 Refresh Data"):
-        refresh_config_if_needed(ws_config)
-        st.rerun()
+        last_refresh = st.session_state.get('last_prod_refresh', 0)
+        current_time = time.time()
+        if current_time - last_refresh > 30:  # 30 second cooldown
+            refresh_config_if_needed(ws_config)
+            st.session_state.last_prod_refresh = current_time
+            st.rerun()
+        else:
+            st.warning("Please wait before refreshing again")
 
     # Auto-refresh config to get latest changes
     refresh_config_if_needed(ws_config)
@@ -536,13 +629,13 @@ def production_ui(ws_config, ws_history):
                     **values,
                     "Comments": comments
                 }
-                append_history(ws_history, record)
-                st.success(f"Saved! EntryID: {entry_id}")
+                if safe_sheet_operation(append_history, ws_history, record):
+                    st.success(f"Saved! EntryID: {entry_id}")
             except Exception as e:
                 st.error(f"Error saving data: {str(e)}")
 
     # Display recent entries
-    df = get_recent_entries(ws_history, product)
+    df = safe_sheet_operation(get_recent_entries, ws_history, product)
     if not df.empty:
         st.subheader("Recent Entries (for this product)")
         # Show User column first in the display
@@ -557,7 +650,7 @@ def quality_ui(ws_config, ws_quality_history, ws_quality_config):
     st.subheader(f"Quality Data Entry - Inspector: {st.session_state.current_user}")
     
     # Read quality configuration
-    quality_fields = read_quality_config(ws_quality_config)
+    quality_fields = safe_sheet_operation(read_quality_config, ws_quality_config)
     
     # Read available products from production config
     available_products = list(st.session_state.cfg.keys())
@@ -606,18 +699,18 @@ def quality_ui(ws_config, ws_quality_history, ws_quality_config):
                 "Comments": comments
             }
             
-            append_quality_history(ws_quality_history, record, quality_fields)
-            st.success(f"Quality data saved! Entry ID: {entry_id}")
-            
-            # Clear signature
-            signature_canvas.text_input("Draw your signature or type it here", value="", key="digital_signature_clear")
+            if safe_sheet_operation(append_quality_history, ws_quality_history, record, quality_fields):
+                st.success(f"Quality data saved! Entry ID: {entry_id}")
+                
+                # Clear signature
+                signature_canvas.text_input("Draw your signature or type it here", value="", key="digital_signature_clear")
             
         except Exception as e:
             st.error(f"Error saving quality data: {str(e)}")
     
     # Display recent quality entries
     try:
-        quality_records = ws_quality_history.get_all_records()
+        quality_records = safe_sheet_operation(ws_quality_history.get_all_records)
         if quality_records:
             df = pd.DataFrame(quality_records)
             st.subheader("Recent Quality Entries")
@@ -650,13 +743,13 @@ def main():
         
         # Read config from Google Sheets at startup
         if not st.session_state.cfg:
-            st.session_state.cfg = read_config(ws_config)
+            st.session_state.cfg = safe_sheet_operation(read_config, ws_config)
             st.session_state.last_config_update = datetime.now()
 
         # Check if there are products without subtopics and add default ones
         products_in_sheet = set()
         try:
-            records = ws_config.get_all_records()
+            records = safe_sheet_operation(ws_config.get_all_records)
             for record in records:
                 product = str(record.get("Product", "")).strip()
                 if product:
@@ -672,7 +765,7 @@ def main():
                 config_changed = True
                 
         if config_changed:
-            write_config(ws_config, st.session_state.cfg)
+            safe_sheet_operation(write_config, ws_config, st.session_state.cfg)
 
         # Initialize user role in session state
         if 'user_role' not in st.session_state:
@@ -698,8 +791,6 @@ def main():
 
     except Exception as e:
         st.error(f"Application error: {str(e)}")
+
 if __name__ == "__main__":
     main()
-
-
-
