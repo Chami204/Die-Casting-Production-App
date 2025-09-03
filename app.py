@@ -20,10 +20,13 @@ DEFAULT_SUBTOPICS = [
 ]
 
 # User credentials (in a real app, these should be stored securely)
+# User credentials for multiple production users
 USERS = {
-    "Production": "prod123",
-    "Quality": "quality123", 
-    "Downtime": "downtime123",
+    "Production_User1": "prod123",
+    "Production_User2": "prod456", 
+    "Production_User3": "prod789",
+    "Quality_User1": "quality123",
+    "Downtime_User1": "downtime123",
     "Admin": "admin123"
 }
 
@@ -99,12 +102,17 @@ def ensure_worksheets(sh):
         ws_config.update("A1", rows)
         ws_config.freeze(rows=1)
 
-    # History sheet
+    # History sheet - Add User column as first column
     try:
         ws_history = sh.worksheet("History")
+        # Check if User column exists, if not add it
+        headers = ws_history.row_values(1)
+        if "User" not in headers:
+            new_headers = ["User"] + headers
+            ws_history.update("A1", [new_headers])
     except gspread.WorksheetNotFound:
         ws_history = sh.add_worksheet(title = "History", rows=2000, cols=50)
-        headers = ["EntryID", "Timestamp", "User", "Product", "Comments"] + DEFAULT_SUBTOPICS
+        headers = ["User", "EntryID", "Timestamp", "Product", "Comments"] + DEFAULT_SUBTOPICS
         ws_history.update("A1", [headers])
         ws_history.freeze(rows=1)
 
@@ -169,7 +177,7 @@ def refresh_config_if_needed(ws_config):
 def ensure_history_headers(ws_history, product):
     current_subtopics = st.session_state.cfg.get(product, DEFAULT_SUBTOPICS.copy())
     headers = ws_history.row_values(1)
-    needed_headers = ["EntryID", "Timestamp", "User", "Product", "Comments"] + current_subtopics
+    needed_headers = ["User", "EntryID", "Timestamp", "Product", "Comments"] + current_subtopics
     
     if set(headers) != set(needed_headers):
         ws_history.update("A1", [needed_headers])
@@ -317,7 +325,7 @@ def admin_ui(ws_config):
 
 # ------------------ Production UI ------------------
 def production_ui(ws_config, ws_history):
-    st.subheader("Production Data Entry")
+    st.subheader(f"Production Data Entry - User: {st.session_state.current_user}")
     
     # Manual refresh button
     if st.button("🔄 Refresh Data"):
@@ -359,9 +367,9 @@ def production_ui(ws_config, ws_history):
             try:
                 entry_id = uuid.uuid4().hex
                 record = {
+                    "User": st.session_state.current_user,  # Add username first
                     "EntryID": entry_id,
                     "Timestamp": get_sri_lanka_time(),
-                    "User": st.session_state.current_user,
                     "Product": product,
                     **values,
                     "Comments": comments
@@ -375,7 +383,10 @@ def production_ui(ws_config, ws_history):
     df = get_recent_entries(ws_history, product)
     if not df.empty:
         st.subheader("Recent Entries (for this product)")
-        st.dataframe(df[["Timestamp", "User", "Product"] + current_subtopics + ["Comments"]].head(10))
+        # Show User column first in the display
+        display_columns = ["User", "Timestamp", "Product"] + current_subtopics + ["Comments"]
+        available_columns = [col for col in display_columns if col in df.columns]
+        st.dataframe(df[available_columns].head(10))
     else:
         st.caption("No entries yet for this product.")
 
@@ -441,11 +452,11 @@ def main():
         # Navigation based on user role
         if st.session_state.current_user == "Admin":
             admin_ui(ws_config)
-        elif st.session_state.current_user == "Production":
+        elif "Production" in st.session_state.current_user:
             production_ui(ws_config, ws_history)
-        elif st.session_state.current_user == "Quality":
+        elif "Quality" in st.session_state.current_user:
             quality_ui()
-        elif st.session_state.current_user == "Downtime":
+        elif "Downtime" in st.session_state.current_user:
             downtime_ui()
 
     except Exception as e:
@@ -453,3 +464,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
