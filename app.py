@@ -19,16 +19,42 @@ DEFAULT_SUBTOPICS = [
     "Number of rejects"
 ]
 
-# User credentials (in a real app, these should be stored securely)
-# User credentials for multiple production users
-USERS = {
-    "Production_User1": "prod123",
-    "Production_User2": "prod456", 
-    "Production_User3": "prod789",
-    "Quality_User1": "quality123",
-    "Downtime_User1": "downtime123",
-    "Admin": "admin123"
-}
+# ------------------ User Management ------------------
+def read_users_config(ws_users):
+    """Read users from Google Sheets"""
+    try:
+        values = ws_users.get_all_records()
+        users = {}
+        for row in values:
+            username = str(row.get("Username", "")).strip()
+            password = str(row.get("Password", "")).strip()
+            role = str(row.get("Role", "")).strip()
+            if username and password:
+                users[username] = {
+                    "password": password,
+                    "role": role
+                }
+        return users
+    except Exception as e:
+        st.error(f"Error reading users config: {str(e)}")
+        return {}
+
+def write_users_config(ws_users, users: dict):
+    """Write users to Google Sheets"""
+    try:
+        rows = [["Username", "Password", "Role"]]
+        for username, user_data in users.items():
+            rows.append([
+                username,
+                user_data.get("password", ""),
+                user_data.get("role", "")
+            ])
+        ws_users.clear()
+        ws_users.update("A1", rows)
+        return True
+    except Exception as e:
+        st.error(f"Error writing users config: {str(e)}")
+        return False
 
 # ------------------ Initialize Session State ------------------
 if 'cfg' not in st.session_state:
@@ -41,6 +67,8 @@ if 'current_user' not in st.session_state:
     st.session_state.current_user = None
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
+if 'user_role' not in st.session_state:
+    st.session_state.user_role = ""
 
 # ------------------ Helper Functions ------------------
 def get_sri_lanka_time():
@@ -102,6 +130,15 @@ def ensure_worksheets(sh):
         ws_config.update("A1", rows)
         ws_config.freeze(rows=1)
 
+    # Users Config sheet
+    try:
+        ws_users = sh.worksheet("User_Credentials")
+    except gspread.WorksheetNotFound:
+        ws_users = sh.add_worksheet(title="User_Credentials", rows=1000, cols=3)
+        rows = [["Username", "Password", "Role"]]
+        ws_users.update("A1", rows)
+        ws_users.freeze(rows=1)
+
     # History sheet - Add User column as first column
     try:
         ws_history = sh.worksheet("History")
@@ -116,7 +153,7 @@ def ensure_worksheets(sh):
         ws_history.update("A1", [headers])
         ws_history.freeze(rows=1)
 
-    return ws_config, ws_history
+    return ws_config, ws_history, ws_users
 
 # ------------------ Config helpers ------------------
 def read_config(ws_config):
@@ -255,7 +292,8 @@ def find_entry_by_id(ws_history, entry_id: str) -> dict:
         return None
 
 # ------------------ Login System ------------------
-def login_system():
+# ------------------ Login System ------------------
+def login_system(ws_users):
     st.sidebar.header("Login")
     
     if st.session_state.logged_in:
@@ -266,13 +304,21 @@ def login_system():
             st.rerun()
         return True
     
-    username = st.sidebar.selectbox("Select User", options=[""] + list(USERS.keys()))
+    # Read users from sheet
+    users = read_users_config(ws_users)
+    
+    if not users:
+        st.sidebar.error("No users configured. Please contact admin.")
+        return False
+    
+    username = st.sidebar.selectbox("Select User", options=[""] + list(users.keys()))
     password = st.sidebar.text_input("Password", type="password")
     
     if st.sidebar.button("Login"):
-        if username in USERS and USERS[username] == password:
+        if username in users and users[username]["password"] == password:
             st.session_state.logged_in = True
             st.session_state.current_user = username
+            st.session_state.user_role = users[username].get("role", "")
             st.sidebar.success("Login successful!")
             st.rerun()
         else:
@@ -281,43 +327,77 @@ def login_system():
     return st.session_state.logged_in
 
 # ------------------ Admin UI ------------------
-def admin_ui(ws_config):
-    st.subheader("Admin Panel - Manage Products")
+def admin_ui(ws_config, ws_users):
+    st.subheader("Admin Panel - Manage Products & Users")
     
     # Auto-refresh config to see changes from other devices
     refresh_config_if_needed(ws_config)
 
-    # Create new product
-    with st.expander("Create New Product"):
-        new_product = st.text_input("New Product Name", key="new_product")
-        if st.button("Create Product"):
-            success, message = add_product_with_default_subtopics(ws_config, new_product)
-            if success:
-                st.success(message)
-                st.rerun()
-            else:
-                st.error(message)
+    tab1, tab2 = st.tabs(["Manage Products", "Manage Users"])
 
-    # Display current configuration
-    st.divider()
-    st.subheader("Current Products Configuration")
-    st.info("""
-    Instructions:
-    1. To add a product: Use the form above or edit the 'Production_Config' sheet directly
-    2. When adding directly to Google Sheets: Add only the product name in column A
-    3. The app will automatically add all default subtopics when it detects a new product
-    4. Click 'Refresh Configuration' to sync changes
-    """)
-    
-    if st.session_state.cfg:
-        for product, subtopics in st.session_state.cfg.items():
-            with st.expander(f"Product: {product}"):
-                st.write("Subtopics:")
-                for subtopic in subtopics:
-                    st.write(f"- {subtopic}")
-    else:
-        st.info("No products configured yet.")
-    
+    with tab1:
+        # Create new product
+        with st.expander("Create New Product"):
+            new_product = st.text_input("New Product Name", key="new_product")
+            if st.button("Create Product"):
+                success, message = add_product_with_default_subtopics(ws_config, new_product)
+                if success:
+                    st.success(message)
+                    st.rerun()
+                else:
+                    st.error(message)
+
+        # Display current configuration
+        st.divider()
+        st.subheader("Current Products Configuration")
+        st.info("""
+        Instructions:
+        1. To add a product: Use the form above or edit the 'Production_Config' sheet directly
+        2. When adding directly to Google Sheets: Add only the product name in column A
+        3. The app will automatically add all default subtopics when it detects a new product
+        4. Click 'Refresh Configuration' to sync changes
+        """)
+        
+        if st.session_state.cfg:
+            for product, subtopics in st.session_state.cfg.items():
+                with st.expander(f"Product: {product}"):
+                    st.write("Subtopics:")
+                    for subtopic in subtopics:
+                        st.write(f"- {subtopic}")
+        else:
+            st.info("No products configured yet.")
+
+    with tab2:
+        st.subheader("Manage User Credentials")
+        st.info("Edit the 'User_Credentials' sheet in Google Sheets to add/remove users.")
+        
+        # Display current users
+        users = read_users_config(ws_users)
+        if users:
+            st.write("Current Users:")
+            for username, user_data in users.items():
+                st.write(f"- **{username}**: {user_data.get('role', 'No role')}")
+        else:
+            st.info("No users configured yet.")
+        
+        # Add new user form
+        with st.expander("Add New User"):
+            new_username = st.text_input("Username", key="new_username")
+            new_password = st.text_input("Password", type="password", key="new_password")
+            new_role = st.selectbox("Role", ["Production", "Quality", "Downtime", "Admin"], key="new_role")
+            
+            if st.button("Add User"):
+                if new_username and new_password:
+                    users[new_username] = {
+                        "password": new_password,
+                        "role": new_role
+                    }
+                    if write_users_config(ws_users, users):
+                        st.success(f"User '{new_username}' added successfully!")
+                        st.rerun()
+                else:
+                    st.warning("Please provide both username and password.")
+
     # Manual refresh button
     if st.button("🔄 Refresh Configuration"):
         st.session_state.last_config_update = None
@@ -416,7 +496,7 @@ def main():
     try:
         client = get_gs_client()
         sh = open_spreadsheet(client)
-        ws_config, ws_history = ensure_worksheets(sh)
+        ws_config, ws_history, ws_users = ensure_worksheets(sh)
         
         # Read config from Google Sheets at startup
         if not st.session_state.cfg:
@@ -444,24 +524,28 @@ def main():
         if config_changed:
             write_config(ws_config, st.session_state.cfg)
 
+        # Initialize user role in session state
+        if 'user_role' not in st.session_state:
+            st.session_state.user_role = ""
+
         # Login system
-        if not login_system():
+        if not login_system(ws_users):
             st.info("Please login to access the system")
             return
 
         # Navigation based on user role
-        if st.session_state.current_user == "Admin":
-            admin_ui(ws_config)
-        elif "Production" in st.session_state.current_user:
+        if st.session_state.user_role == "Admin":
+            admin_ui(ws_config, ws_users)
+        elif st.session_state.user_role == "Production":
             production_ui(ws_config, ws_history)
-        elif "Quality" in st.session_state.current_user:
+        elif st.session_state.user_role == "Quality":
             quality_ui()
-        elif "Downtime" in st.session_state.current_user:
+        elif st.session_state.user_role == "Downtime":
             downtime_ui()
+        else:
+            # Default to production if role not specified
+            production_ui(ws_config, ws_history)
 
     except Exception as e:
         st.error(f"Application error: {str(e)}")
-
-if __name__ == "__main__":
-    main()
 
