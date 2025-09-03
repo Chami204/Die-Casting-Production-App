@@ -249,7 +249,7 @@ def login_system():
             st.sidebar.error("Invalid quality credentials")
     
     # Regular user login section
-    st.sidebar.subheader("Production/Admin Login")
+    st.sidebar.subheader("Production Login")
     username = st.sidebar.text_input("Username", key="prod_username")
     password = st.sidebar.text_input("Password", type="password", key="prod_password")
     
@@ -499,4 +499,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
