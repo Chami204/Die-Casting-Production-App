@@ -18,6 +18,21 @@ DEFAULT_SUBTOPICS = [
     "Num of pcs to rework",
     "Number of rejects"
 ]
+# Quality section password
+QUALITY_PASSWORD = "quality123"
+
+# Quality default fields
+QUALITY_DEFAULT_FIELDS = [
+    "Total_Lot_Qty",
+    "Sample_Size", 
+    "AQL_Level",
+    "Accept_Reject",
+    "Results",
+    "Quality_Inspector",
+    "EPF_Number",
+    "Digital_Signature"
+]
+
 
 # ------------------ User Management ------------------
 def read_users_config(ws_users):
@@ -129,6 +144,17 @@ def ensure_worksheets(sh):
         rows = [["Product", "Subtopic"]]
         ws_config.update("A1", rows)
         ws_config.freeze(rows=1)
+    return ws_config, ws_history, ws_users, ws_quality_config, ws_quality_history
+
+
+    # Quality Config sheet
+    try:
+        ws_quality_config = sh.worksheet("Quality_Config")
+    except gspread.WorksheetNotFound:
+        ws_quality_config = sh.add_worksheet(title="Quality_Config", rows=1000, cols=2)
+        rows = [["Field", "Type"]]
+        ws_quality_config.update("A1", rows)
+        ws_quality_config.freeze(rows=1)
 
     # Users Config sheet
     try:
@@ -139,10 +165,9 @@ def ensure_worksheets(sh):
         ws_users.update("A1", rows)
         ws_users.freeze(rows=1)
 
-    # History sheet - Add User column as first column
+    # History sheet
     try:
         ws_history = sh.worksheet("History")
-        # Check if User column exists, if not add it
         headers = ws_history.row_values(1)
         if "User" not in headers:
             new_headers = ["User"] + headers
@@ -153,7 +178,16 @@ def ensure_worksheets(sh):
         ws_history.update("A1", [headers])
         ws_history.freeze(rows=1)
 
-    return ws_config, ws_history, ws_users
+    # Quality History sheet
+    try:
+        ws_quality_history = sh.worksheet("Quality_History")
+    except gspread.WorksheetNotFound:
+        ws_quality_history = sh.add_worksheet(title="Quality_History", rows=2000, cols=50)
+        headers = ["User", "EntryID", "Timestamp", "Product"] + QUALITY_DEFAULT_FIELDS
+        ws_quality_history.update("A1", [headers])
+        ws_quality_history.freeze(rows=1)
+
+    return ws_config, ws_history, ws_users, ws_quality_config, ws_quality_history
 
 # ------------------ Config helpers ------------------
 def read_config(ws_config):
@@ -209,6 +243,37 @@ def refresh_config_if_needed(ws_config):
         if new_cfg != st.session_state.cfg:
             st.session_state.cfg = new_cfg
         st.session_state.last_config_update = datetime.now()
+
+def read_quality_config(ws_quality_config):
+    """Read quality configuration from Google Sheets"""
+    try:
+        values = ws_quality_config.get_all_records()
+        quality_fields = {}
+        for row in values:
+            field = str(row.get("Field", "")).strip()
+            field_type = str(row.get("Type", "")).strip()
+            if field:
+                quality_fields[field] = field_type
+        return quality_fields
+    except Exception as e:
+        st.error(f"Error reading quality config: {str(e)}")
+        return {field: "text" for field in QUALITY_DEFAULT_FIELDS}
+
+def ensure_quality_history_headers(ws_quality_history, quality_fields):
+    """Ensure quality history sheet has correct headers"""
+    headers = ws_quality_history.row_values(1)
+    needed_headers = ["User", "EntryID", "Timestamp", "Product"] + list(quality_fields.keys())
+    
+    if set(headers) != set(needed_headers):
+        ws_quality_history.update("A1", [needed_headers])
+        ws_quality_history.freeze(rows=1)
+    return needed_headers
+
+def append_quality_history(ws_quality_history, record: dict, quality_fields):
+    """Append record to quality history"""
+    headers = ensure_quality_history_headers(ws_quality_history, quality_fields)
+    row = [record.get(h, "") for h in headers]
+    ws_quality_history.append_row(row, value_input_option="USER_ENTERED")
 
 # ------------------ History helpers ------------------
 def ensure_history_headers(ws_history, product):
@@ -291,7 +356,7 @@ def find_entry_by_id(ws_history, entry_id: str) -> dict:
         st.error(f"Error finding entry: {str(e)}")
         return None
 
-# ------------------ Login System ------------------
+
 # ------------------ Login System ------------------
 def login_system(ws_users):
     st.sidebar.header("Login")
@@ -301,18 +366,37 @@ def login_system(ws_users):
         if st.sidebar.button("Logout"):
             st.session_state.logged_in = False
             st.session_state.current_user = None
+            st.session_state.user_role = ""
             st.rerun()
         return True
+    
+    # Quality login section
+    st.sidebar.subheader("Quality Login")
+    quality_username = st.sidebar.text_input("Quality Username", key="quality_username")
+    quality_password = st.sidebar.text_input("Quality Password", type="password", key="quality_password")
+    
+    if st.sidebar.button("Quality Login"):
+        if quality_password == QUALITY_PASSWORD and quality_username:
+            st.session_state.logged_in = True
+            st.session_state.current_user = quality_username
+            st.session_state.user_role = "Quality"
+            st.sidebar.success("Quality login successful!")
+            st.rerun()
+        else:
+            st.sidebar.error("Invalid quality credentials")
+    
+    # Regular user login section
+    st.sidebar.subheader("Production/Admin Login")
     
     # Read users from sheet
     users = read_users_config(ws_users)
     
     if not users:
-        st.sidebar.error("No users configured. Please contact admin.")
+        st.sidebar.info("No production users configured.")
         return False
     
     username = st.sidebar.selectbox("Select User", options=[""] + list(users.keys()))
-    password = st.sidebar.text_input("Password", type="password")
+    password = st.sidebar.text_input("Password", type="password", key="prod_password")
     
     if st.sidebar.button("Login"):
         if username in users and users[username]["password"] == password:
@@ -471,13 +555,81 @@ def production_ui(ws_config, ws_history):
         st.caption("No entries yet for this product.")
 
 # ------------------ Quality UI ------------------
-def quality_ui():
-    st.subheader("Quality Module - Coming Soon")
-    st.info("Quality module will be implemented in the next update")
-    st.write("Planned features:")
-    st.write("- Quality inspections recording")
-    st.write("- Defect tracking")
-    st.write("- Quality reports")
+# ------------------ Quality UI ------------------
+def quality_ui(ws_config, ws_quality_history, ws_quality_config):
+    st.subheader(f"Quality Data Entry - Inspector: {st.session_state.current_user}")
+    
+    # Read quality configuration
+    quality_fields = read_quality_config(ws_quality_config)
+    
+    # Read available products from production config
+    available_products = list(st.session_state.cfg.keys())
+    
+    if not available_products:
+        st.error("No products available. Please ask admin to add products first.")
+        return
+    
+    st.write("Fill all quality inspection details below:")
+    
+    # Product selection
+    product = st.selectbox("Select Product", options=available_products, key="quality_product")
+    
+    # Quality fields
+    values = {}
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        values["Total_Lot_Qty"] = st.number_input("Total Lot Qty", min_value=1, step=1, key="total_lot_qty")
+        values["Sample_Size"] = st.number_input("Sample Size", min_value=1, step=1, key="sample_size")
+        values["AQL_Level"] = st.text_input("AQL Level", key="aql_level")
+        values["Accept_Reject"] = st.selectbox("Accept/Reject", options=["Accept", "Reject"], key="accept_reject")
+    
+    with col2:
+        values["Results"] = st.text_input("Results", key="results")
+        values["Quality_Inspector"] = st.text_input("Quality Inspector", value=st.session_state.current_user, key="quality_inspector")
+        values["EPF_Number"] = st.text_input("EPF Number", key="epf_number")
+        
+        # Digital Signature Canvas
+        st.write("Digital Signature:")
+        signature_canvas = st.empty()
+        signature = signature_canvas.text_input("Draw your signature or type it here", key="digital_signature")
+    
+    comments = st.text_area("Additional Comments", key="quality_comments")
+    
+    if st.button("Submit Quality Data", key="submit_quality_btn"):
+        try:
+            entry_id = uuid.uuid4().hex
+            record = {
+                "User": st.session_state.current_user,
+                "EntryID": entry_id,
+                "Timestamp": get_sri_lanka_time(),
+                "Product": product,
+                **values,
+                "Comments": comments
+            }
+            
+            append_quality_history(ws_quality_history, record, quality_fields)
+            st.success(f"Quality data saved! Entry ID: {entry_id}")
+            
+            # Clear signature
+            signature_canvas.text_input("Draw your signature or type it here", value="", key="digital_signature_clear")
+            
+        except Exception as e:
+            st.error(f"Error saving quality data: {str(e)}")
+    
+    # Display recent quality entries
+    try:
+        quality_records = ws_quality_history.get_all_records()
+        if quality_records:
+            df = pd.DataFrame(quality_records)
+            st.subheader("Recent Quality Entries")
+            display_cols = ["User", "Timestamp", "Product", "Total_Lot_Qty", "Sample_Size", 
+                           "AQL_Level", "Accept_Reject", "Results"]
+            available_cols = [col for col in display_cols if col in df.columns]
+            st.dataframe(df[available_cols].head(10).sort_values("Timestamp", ascending=False))
+    except Exception as e:
+        st.warning("No quality entries yet or error loading history.")
 
 # ------------------ Downtime UI ------------------
 def downtime_ui():
@@ -496,7 +648,7 @@ def main():
     try:
         client = get_gs_client()
         sh = open_spreadsheet(client)
-        ws_config, ws_history, ws_users = ensure_worksheets(sh)
+        ws_config, ws_history, ws_users, ws_quality_config, ws_quality_history = ensure_worksheets(sh)
         
         # Read config from Google Sheets at startup
         if not st.session_state.cfg:
@@ -539,7 +691,7 @@ def main():
         elif st.session_state.user_role == "Production":
             production_ui(ws_config, ws_history)
         elif st.session_state.user_role == "Quality":
-            quality_ui()
+            quality_ui(ws_config, ws_quality_history, ws_quality_config)
         elif st.session_state.user_role == "Downtime":
             downtime_ui()
         else:
@@ -550,4 +702,5 @@ def main():
         st.error(f"Application error: {str(e)}")
 if __name__ == "__main__":
     main()
+
 
