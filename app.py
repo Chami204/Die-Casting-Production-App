@@ -299,6 +299,16 @@ def admin_ui():
 def production_ui():
     st.subheader(f"Production Data Entry - User: {st.session_state.current_user}")
     
+    # Refresh button at the top
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.write("")  # Spacer
+    with col2:
+        if st.button("🔄 Refresh Products", key="prod_refresh_btn"):
+            st.session_state.last_config_update = None
+            refresh_config_if_needed()
+            st.rerun()
+    
     refresh_config_if_needed()
     
     if not st.session_state.cfg:
@@ -360,6 +370,16 @@ def production_ui():
 # ------------------ Quality UI ------------------
 def quality_ui():
     st.subheader(f"Quality Data Entry - Inspector: {st.session_state.current_user}")
+    
+    # Refresh button at the top
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.write("")  # Spacer
+    with col2:
+        if st.button("🔄 Refresh Products", key="quality_refresh_btn"):
+            st.session_state.last_config_update = None
+            refresh_config_if_needed()
+            st.rerun()
     
     refresh_config_if_needed()
     
@@ -479,3 +499,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
