@@ -144,8 +144,6 @@ def ensure_worksheets(sh):
         rows = [["Product", "Subtopic"]]
         ws_config.update("A1", rows)
         ws_config.freeze(rows=1)
-    return ws_config, ws_history, ws_users, ws_quality_config, ws_quality_history
-
 
     # Quality Config sheet
     try:
@@ -555,7 +553,6 @@ def production_ui(ws_config, ws_history):
         st.caption("No entries yet for this product.")
 
 # ------------------ Quality UI ------------------
-# ------------------ Quality UI ------------------
 def quality_ui(ws_config, ws_quality_history, ws_quality_config):
     st.subheader(f"Quality Data Entry - Inspector: {st.session_state.current_user}")
     
@@ -648,7 +645,8 @@ def main():
     try:
         client = get_gs_client()
         sh = open_spreadsheet(client)
-        ws_config, ws_history, ws_users, ws_quality_config, ws_quality_history = ensure_worksheets(sh)
+        worksheets = ensure_worksheets(sh)
+        ws_config, ws_history, ws_users, ws_quality_config, ws_quality_history = worksheets
         
         # Read config from Google Sheets at startup
         if not st.session_state.cfg:
@@ -702,5 +700,6 @@ def main():
         st.error(f"Application error: {str(e)}")
 if __name__ == "__main__":
     main()
+
 
 
