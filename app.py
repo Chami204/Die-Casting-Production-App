@@ -144,7 +144,7 @@ def get_gs_client():
             "token_uri": st.secrets["gcp_service_account"]["token_uri"],
             "auth_provider_x509_cert_url": st.secrets["gcp_service_account"]["auth_provider_x509_cert_url"],
             "client_x509_cert_url": st.secrets["gcp_service_account"]["client_x509_cert_url"]
-        ]
+        }
         
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         return gspread.authorize(creds)
@@ -872,3 +872,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
