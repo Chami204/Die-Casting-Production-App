@@ -345,21 +345,59 @@ def login_system():
             st.session_state.user_role = ""
             st.rerun()
         return True
-        
-    # Regular user login section
-    st.sidebar.subheader("Production Login")
-    username = st.sidebar.text_input("Username", key="prod_username")
-    password = st.sidebar.text_input("Password", type="password", key="prod_password")
     
-    if st.sidebar.button("Production Login"):
-        if username and password:
-            st.session_state.logged_in = True
-            st.session_state.current_user = username
-            st.session_state.user_role = "Production"
-            st.sidebar.success("Login successful!")
-            st.rerun()
-        else:
-            st.sidebar.error("Please enter username and password")
+    # Read users from sheet for production login
+    users = {}
+    try:
+        if initialize_google_sheets():
+            client = get_gs_client()
+            if client:
+                name = st.secrets["gsheet"]["spreadsheet_name"]
+                sh = client.open(name)
+                ws_users = sh.worksheet("User_Credentials")
+                user_records = ws_users.get_all_records()
+                
+                for row in user_records:
+                    username = str(row.get("Username", "")).strip()
+                    password = str(row.get("Password", "")).strip()
+                    role = str(row.get("Role", "")).strip()
+                    if username and password:
+                        users[username] = {
+                            "password": password,
+                            "role": role
+                        }
+    except Exception as e:
+        st.sidebar.warning("Could not load user list from Google Sheets")
+    
+    # Regular user login section - CHANGED TO DROPDOWN
+    st.sidebar.subheader("Production Login")
+    
+    if users:
+        username = st.sidebar.selectbox("Select User", options=[""] + list(users.keys()), key="prod_username")
+        password = st.sidebar.text_input("Password", type="password", key="prod_password")
+        
+        if st.sidebar.button("Production Login"):
+            if username in users and users[username]["password"] == password:
+                st.session_state.logged_in = True
+                st.session_state.current_user = username
+                st.session_state.user_role = users[username].get("role", "Production")
+                st.sidebar.success("Login successful!")
+                st.rerun()
+            else:
+                st.sidebar.error("Invalid username or password")
+    else:
+        username = st.sidebar.text_input("Username", key="prod_username")
+        password = st.sidebar.text_input("Password", type="password", key="prod_password")
+        
+        if st.sidebar.button("Production Login"):
+            if username and password:
+                st.session_state.logged_in = True
+                st.session_state.current_user = username
+                st.session_state.user_role = "Production"
+                st.sidebar.success("Login successful!")
+                st.rerun()
+            else:
+                st.sidebar.error("Please enter username and password")
     
     # Downtime login section
     st.sidebar.subheader("Downtime Login")
@@ -712,6 +750,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
