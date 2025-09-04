@@ -94,8 +94,10 @@ if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 if 'user_role' not in st.session_state:
     st.session_state.user_role = ""
+if 'sheet_initialized' not in st.session_state:  # ADD THIS LINE
+    st.session_state.sheet_initialized = False   # ADD THIS LINE
 
-# Initialize local data from storage (remove the old local_data initialization)
+# Initialize local data from storage
 if 'die_casting_production' not in st.session_state:
     st.session_state.die_casting_production = load_from_local_storage('production', [])
 if 'die_casting_quality' not in st.session_state:
@@ -813,6 +815,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
