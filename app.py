@@ -55,6 +55,40 @@ DOWNTIME_DEFAULT_FIELDS = [
 ]
 
 # ------------------ Local Storage Helpers ------------------
+def save_to_local_storage(data_type, data):
+    """Save data to browser's local storage"""
+    try:
+        key = f"die_casting_{data_type}"
+        json_data = json.dumps(data)
+        st.session_state[key] = json_data
+    except Exception as e:
+        st.error(f"Error saving to local storage: {str(e)}")
+
+def load_from_local_storage(data_type, default=None):
+    """Load data from browser's local storage"""
+    try:
+        key = f"die_casting_{data_type}"
+        if key in st.session_state:
+            loaded_data = st.session_state[key]
+            # Check if it's a JSON string and parse it
+            if isinstance(loaded_data, str):
+                return json.loads(loaded_data)
+            else:
+                return loaded_data
+    except Exception as e:
+        st.error(f"Error loading from local storage: {str(e)}")
+    return default if default is not None else []
+
+def clear_local_storage(data_type):
+    """Clear data from local storage"""
+    try:
+        key = f"die_casting_{data_type}"
+        if key in st.session_state:
+            del st.session_state[key]
+    except:
+        pass
+
+# ------------------ Local Data Management ------------------
 def save_to_local(data_type, record):
     """Save data to local storage"""
     try:
@@ -87,31 +121,7 @@ def save_to_local(data_type, record):
         
     except Exception as e:
         st.error(f"Error saving data locally: {str(e)}")
-
-
-def load_from_local_storage(data_type, default=None):
-    """Load data from browser's local storage"""
-    try:
-        key = f"die_casting_{data_type}"
-        if key in st.session_state:
-            loaded_data = st.session_state[key]
-            # Check if it's a JSON string and parse it
-            if isinstance(loaded_data, str):
-                return json.loads(loaded_data)
-            else:
-                return loaded_data
-    except Exception as e:
-        st.error(f"Error loading from local storage: {str(e)}")
-    return default if default is not None else []
-
-def clear_local_storage(data_type):
-    """Clear data from local storage"""
-    try:
-        key = f"die_casting_{data_type}"
-        if key in st.session_state:
-            del st.session_state[key]
-    except:
-        pass
+        
 
 # ------------------ Initialize Session State ------------------
 if 'cfg' not in st.session_state:
@@ -965,6 +975,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
