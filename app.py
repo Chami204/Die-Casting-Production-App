@@ -48,6 +48,7 @@ DOWNTIME_DEFAULT_FIELDS = [
     "Breakdown_Reason",
     "Duration_Mins"
 ]
+
 # ------------------ Initialize Session State ------------------
 if 'cfg' not in st.session_state:
     st.session_state.cfg = {}
@@ -65,18 +66,11 @@ if 'local_data' not in st.session_state:
     st.session_state.local_data = {
         'production': [],
         'quality': [],
+        'downtime': [],
         'pending_sync': False
     }
 if 'sheet_initialized' not in st.session_state:
     st.session_state.sheet_initialized = False
-
-if 'local_data' not in st.session_state:
-    st.session_state.local_data = {
-        'production': [],
-        'quality': [],
-        'downtime': [],  # Add downtime section
-        'pending_sync': False
-    }
 
 # ------------------ Helper Functions ------------------
 def get_sri_lanka_time():
@@ -113,7 +107,7 @@ def get_gs_client():
             "token_uri": st.secrets["gcp_service_account"]["token_uri"],
             "auth_provider_x509_cert_url": st.secrets["gcp_service_account"]["auth_provider_x509_cert_url"],
             "client_x509_cert_url": st.secrets["gcp_service_account"]["client_x509_cert_url"]
-        }
+        ]
         
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         return gspread.authorize(creds)
@@ -180,6 +174,89 @@ def read_downtime_config():
         "machines": ["Machine 1", "Machine 2", "Machine 3"],
         "breakdown_reasons": ["Electrical Fault", "Mechanical Failure", "Maintenance", "Material Issue"]
     }
+
+def ensure_google_sheets():
+    """Ensure all required Google Sheets exist"""
+    try:
+        client = get_gs_client()
+        if client is None:
+            return False
+            
+        name = st.secrets["gsheet"]["spreadsheet_name"]
+        sh = client.open(name)
+        
+        # List of sheets to ensure exist
+        sheets_to_create = [
+            ("Production_Config", [["Product", "Subtopic"]]),
+            ("Quality_Config", [["Field", "Type"]]),
+            ("Downtime_Config", [["Machine", "Breakdown_Reason"]]),
+            ("User_Credentials", [["Username", "Password", "Role"]]),
+            ("History", [["User", "EntryID", "Timestamp", "Product", "Comments"] + DEFAULT_SUBTOPICS]),
+            ("Quality_History", [["User", "EntryID", "Timestamp", "Product"] + QUALITY_DEFAULT_FIELDS]),
+            ("Downtime_History", [["User", "EntryID", "Timestamp"] + DOWNTIME_DEFAULT_FIELDS + ["Comments"]])
+        ]
+        
+        for sheet_name, headers in sheets_to_create:
+            try:
+                sh.worksheet(sheet_name)
+            except gspread.WorksheetNotFound:
+                worksheet = sh.add_worksheet(title=sheet_name, rows=1000, cols=20)
+                worksheet.update("A1", headers)
+                worksheet.freeze(rows=1)
+                time.sleep(1)  # Delay between sheet creations
+        
+        return True
+        
+    except Exception as e:
+        st.warning(f"Could not ensure Google Sheets: {str(e)}")
+        return False
+
+# ------------------ Config helpers ------------------
+def get_default_config():
+    """Return default configuration for offline use"""
+    return {
+        "Product1": DEFAULT_SUBTOPICS.copy(),
+        "Product2": DEFAULT_SUBTOPICS.copy()
+    }
+
+def refresh_config_if_needed():
+    """Refresh config from Google Sheets if needed and available"""
+    if should_refresh_config() and initialize_google_sheets():
+        try:
+            client = get_gs_client()
+            if client:
+                name = st.secrets["gsheet"]["spreadsheet_name"]
+                sh = client.open(name)
+                ws_config = sh.worksheet("Production_Config")
+                
+                values = ws_config.get_all_records()
+                cfg = {}
+                for row in values:
+                    p = str(row.get("Product", "")).strip()
+                    s = str(row.get("Subtopic", "")).strip()
+                    if not p or not s:
+                        continue
+                    cfg.setdefault(p, []).append(s)
+                
+                if cfg:
+                    st.session_state.cfg = cfg
+                    st.session_state.last_config_update = datetime.now()
+                    return True
+        except Exception as e:
+            # Silently fail - we'll use offline config
+            pass
+    
+    # Ensure we always have some config
+    if not st.session_state.cfg:
+        st.session_state.cfg = get_default_config()
+    
+    return False
+
+# ------------------ Local Data Management ------------------
+def save_to_local(data_type, record):
+    """Save data to local storage"""
+    st.session_state.local_data[data_type].append(record)
+    st.session_state.local_data['pending_sync'] = True
 
 def sync_with_google_sheets():
     """Sync local data with Google Sheets when connection is available"""
@@ -256,135 +333,6 @@ def sync_with_google_sheets():
     except Exception as e:
         st.warning(f"Sync failed: {str(e)}. Data remains saved locally.")
 
-def ensure_google_sheets():
-    """Ensure all required Google Sheets exist"""
-    try:
-        client = get_gs_client()
-        if client is None:
-            return False
-            
-        name = st.secrets["gsheet"]["spreadsheet_name"]
-        sh = client.open(name)
-        
-        # List of sheets to ensure exist
-        sheets_to_create = [
-            ("Production_Config", [["Product", "Subtopic"]]),
-            ("Quality_Config", [["Field", "Type"]]),
-            ("Downtime_Config", [["Machine", "Breakdown_Reason"]]),
-            ("User_Credentials", [["Username", "Password", "Role"]]),
-            ("History", [["User", "EntryID", "Timestamp", "Product", "Comments"] + DEFAULT_SUBTOPICS]),
-            ("Quality_History", [["User", "EntryID", "Timestamp", "Product"] + QUALITY_DEFAULT_FIELDS]),
-            ("Downtime_History", [["User", "EntryID", "Timestamp"] + DOWNTIME_DEFAULT_FIELDS + ["Comments"]])
-        ]
-        
-        for sheet_name, headers in sheets_to_create:
-            try:
-                sh.worksheet(sheet_name)
-            except gspread.WorksheetNotFound:
-                worksheet = sh.add_worksheet(title=sheet_name, rows=1000, cols=20)
-                worksheet.update("A1", headers)
-                worksheet.freeze(rows=1)
-                time.sleep(1)  # Delay between sheet creations
-        
-        return True
-        
-    except Exception as e:
-        st.warning(f"Could not ensure Google Sheets: {str(e)}")
-        return False
-
-# ------------------ Config helpers ------------------
-def get_default_config():
-    """Return default configuration for offline use"""
-    return {
-        "Product1": DEFAULT_SUBTOPICS.copy(),
-        "Product2": DEFAULT_SUBTOPICS.copy()
-    }
-
-def refresh_config_if_needed():
-    """Refresh config from Google Sheets if needed and available"""
-    if should_refresh_config() and initialize_google_sheets():
-        try:
-            client = get_gs_client()
-            if client:
-                name = st.secrets["gsheet"]["spreadsheet_name"]
-                sh = client.open(name)
-                ws_config = sh.worksheet("Production_Config")
-                
-                values = ws_config.get_all_records()
-                cfg = {}
-                for row in values:
-                    p = str(row.get("Product", "")).strip()
-                    s = str(row.get("Subtopic", "")).strip()
-                    if not p or not s:
-                        continue
-                    cfg.setdefault(p, []).append(s)
-                
-                if cfg:
-                    st.session_state.cfg = cfg
-                    st.session_state.last_config_update = datetime.now()
-        except Exception as e:
-            # Silently fail - we'll use offline config
-            pass
-    
-    # Ensure we always have some config
-    if not st.session_state.cfg:
-        st.session_state.cfg = get_default_config()
-
-# ------------------ Local Data Management ------------------
-def save_to_local(data_type, record):
-    """Save data to local storage"""
-    st.session_state.local_data[data_type].append(record)
-    st.session_state.local_data['pending_sync'] = True
-
-def sync_with_google_sheets():
-    """Sync local data with Google Sheets when connection is available"""
-    if not st.session_state.local_data['pending_sync']:
-        return
-    
-    if not initialize_google_sheets():
-        return
-        
-    try:
-        client = get_gs_client()
-        if client is None:
-            return
-            
-        name = st.secrets["gsheet"]["spreadsheet_name"]
-        sh = client.open(name)
-        
-        # Sync production data
-        if st.session_state.local_data['production']:
-            try:
-                ws_history = sh.worksheet("History")
-                for record in st.session_state.local_data['production']:
-                    headers = ["User", "EntryID", "Timestamp", "Product", "Comments"] + st.session_state.cfg.get(record["Product"], DEFAULT_SUBTOPICS.copy())
-                    row = [record.get(h, "") for h in headers]
-                    ws_history.append_row(row, value_input_option="USER_ENTERED")
-                    time.sleep(1)  # Delay between writes
-            except:
-                pass
-        
-        # Sync quality data
-        if st.session_state.local_data['quality']:
-            try:
-                ws_quality_history = sh.worksheet("Quality_History")
-                for record in st.session_state.local_data['quality']:
-                    headers = ["User", "EntryID", "Timestamp", "Product"] + QUALITY_DEFAULT_FIELDS
-                    row = [record.get(h, "") for h in headers]
-                    ws_quality_history.append_row(row, value_input_option="USER_ENTERED")
-                    time.sleep(1)  # Delay between writes
-            except:
-                pass
-        
-        # Clear synced data
-        st.session_state.local_data['production'] = []
-        st.session_state.local_data['quality'] = []
-        st.session_state.local_data['pending_sync'] = False
-        st.success("Data synced with Google Sheets!")
-        
-    except Exception as e:
-        st.warning(f"Sync failed: {str(e)}. Data saved locally.")
-
 # ------------------ Login System ------------------
 def login_system():
     st.sidebar.header("Login")
@@ -398,12 +346,12 @@ def login_system():
             st.rerun()
         return True
         
-     # Regular user login section
+    # Regular user login section
     st.sidebar.subheader("Production Login")
     username = st.sidebar.text_input("Username", key="prod_username")
     password = st.sidebar.text_input("Password", type="password", key="prod_password")
     
-    if st.sidebar.button("Login"):
+    if st.sidebar.button("Production Login"):
         if username and password:
             st.session_state.logged_in = True
             st.session_state.current_user = username
@@ -412,7 +360,6 @@ def login_system():
             st.rerun()
         else:
             st.sidebar.error("Please enter username and password")
-
     
     # Downtime login section
     st.sidebar.subheader("Downtime Login")
@@ -474,6 +421,10 @@ def admin_ui():
     # Manual refresh button with cooldown
     if st.button("🔄 Refresh Configuration from Google Sheets"):
         st.session_state.last_config_update = None
+        if refresh_config_if_needed():
+            st.success("Configuration refreshed from Google Sheets!")
+        else:
+            st.warning("Could not connect to Google Sheets")
         st.rerun()
 
 # ------------------ Production UI ------------------
@@ -487,7 +438,10 @@ def production_ui():
     with col2:
         if st.button("🔄 Refresh Products", key="prod_refresh_btn"):
             st.session_state.last_config_update = None
-            refresh_config_if_needed()
+            if refresh_config_if_needed():
+                st.success("Products refreshed from Google Sheets!")
+            else:
+                st.warning("Using local product cache")
             st.rerun()
     
     refresh_config_if_needed()
@@ -559,7 +513,10 @@ def quality_ui():
     with col2:
         if st.button("🔄 Refresh Products", key="quality_refresh_btn"):
             st.session_state.last_config_update = None
-            refresh_config_if_needed()
+            if refresh_config_if_needed():
+                st.success("Products refreshed from Google Sheets!")
+            else:
+                st.warning("Using local product cache")
             st.rerun()
     
     refresh_config_if_needed()
@@ -631,7 +588,6 @@ def quality_ui():
         available_cols = [col for col in display_cols if col in local_df.columns]
         st.dataframe(local_df[available_cols].head(10))
 
-
 # ------------------ Downtime UI ------------------
 def downtime_ui():
     st.subheader(f"Machine Downtime Entry - Technician: {st.session_state.current_user}")
@@ -643,7 +599,10 @@ def downtime_ui():
     with col2:
         if st.button("🔄 Refresh Data", key="downtime_refresh_btn"):
             st.session_state.last_config_update = None
-            refresh_config_if_needed()
+            if refresh_config_if_needed():
+                st.success("Data refreshed from Google Sheets!")
+            else:
+                st.warning("Using local data cache")
             st.rerun()
     
     refresh_config_if_needed()
@@ -713,7 +672,6 @@ def downtime_ui():
         available_cols = [col for col in display_cols if col in local_df.columns]
         st.dataframe(local_df[available_cols].head(10))
 
-
 # ------------------ Main ------------------
 def main():
     st.set_page_config(page_title=APP_TITLE, page_icon="🗂️", layout="wide")
@@ -744,7 +702,7 @@ def main():
         elif st.session_state.user_role == "Quality":
             quality_ui()
         elif st.session_state.user_role == "Downtime":
-            downtime_ui()  # Changed from placeholder to actual function
+            downtime_ui()
         else:
             # Default to production if role not specified
             production_ui()
@@ -754,6 +712,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
