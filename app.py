@@ -11,14 +11,31 @@ from functools import lru_cache
 import json
 
 # ------------------ Local Storage Helpers ------------------
-def save_to_local_storage(data_type, data):
-    """Save data to browser's local storage"""
+def save_to_local(data_type, record):
+    """Save data to local storage"""
     try:
+        # Ensure record is a dictionary
+        if not isinstance(record, dict):
+            st.error("Invalid record format")
+            return
+            
+        # Get current data
         key = f"die_casting_{data_type}"
-        json_data = json.dumps(data)
-        st.session_state[key] = json_data
+        current_data = st.session_state.get(key, [])
+        
+        # Add new record
+        current_data.append(record)
+        
+        # Save back to session state and local storage
+        st.session_state[key] = current_data
+        save_to_local_storage(data_type, current_data)
+        
+        # Mark as pending sync
+        st.session_state.die_casting_pending_sync = True
+        save_to_local_storage('pending_sync', True)
+        
     except Exception as e:
-        st.error(f"Error saving to local storage: {str(e)}")
+        st.error(f"Error saving data locally: {str(e)}")
 
 def load_from_local_storage(data_type, default=None):
     """Load data from browser's local storage"""
@@ -602,8 +619,25 @@ def production_ui():
     production_data = st.session_state.get('die_casting_production', [])
     if production_data:
         st.subheader("Local Entries (Pending Sync)")
-        local_df = pd.DataFrame(st.session_state.get('die_casting_production', []))
-        st.dataframe(local_df[["User", "Timestamp", "Product"]].head(10))
+        try:
+            # Convert to list of dictionaries first
+            data_for_df = []
+            for record in production_data:
+                if isinstance(record, dict):
+                    data_for_df.append(record)
+            
+            if data_for_df:
+                local_df = pd.DataFrame(data_for_df)
+                display_cols = ["User", "Timestamp", "Product"]
+                available_cols = [col for col in display_cols if col in local_df.columns]
+                if available_cols:
+                    st.dataframe(local_df[available_cols].head(10))
+                else:
+                    st.info("No displayable data available")
+            else:
+                st.info("No valid production data available")
+        except Exception as e:
+            st.error(f"Error displaying data: {str(e)}")
 
 # ------------------ Quality UI ------------------
 def quality_ui():
@@ -683,13 +717,29 @@ def quality_ui():
             st.error(f"Error saving quality data: {str(e)}")
     
     # Display local quality entries
-    if st.session_state.local_data['quality']:
+    quality_data = st.session_state.get('die_casting_quality', [])
+    if quality_data:
         st.subheader("Local Quality Entries (Pending Sync)")
-        local_df = pd.DataFrame(st.session_state.local_data['quality'])
-        display_cols = ["User", "Timestamp", "Product", "Total_Lot_Qty", "Sample_Size", 
-                       "AQL_Level", "Accept_Reject", "Results"]
-        available_cols = [col for col in display_cols if col in local_df.columns]
-        st.dataframe(local_df[available_cols].head(10))
+        try:
+            # Convert to list of dictionaries first
+            data_for_df = []
+            for record in quality_data:
+                if isinstance(record, dict):
+                    data_for_df.append(record)
+            
+            if data_for_df:
+                local_df = pd.DataFrame(data_for_df)
+                display_cols = ["User", "Timestamp", "Product", "Total_Lot_Qty", "Sample_Size", 
+                               "AQL_Level", "Accept_Reject", "Results"]
+                available_cols = [col for col in display_cols if col in local_df.columns]
+                if available_cols:
+                    st.dataframe(local_df[available_cols].head(10))
+                else:
+                    st.info("No displayable quality data available")
+            else:
+                st.info("No valid quality data available")
+        except Exception as e:
+            st.error(f"Error displaying quality data: {str(e)}")
 
 # ------------------ Downtime UI ------------------
 def downtime_ui():
@@ -768,13 +818,29 @@ def downtime_ui():
             st.error(f"Error saving downtime data: {str(e)}")
     
     # Display local downtime entries
-    if st.session_state.local_data['downtime']:
+    downtime_data = st.session_state.get('die_casting_downtime', [])
+    if downtime_data:
         st.subheader("Local Downtime Entries (Pending Sync)")
-        local_df = pd.DataFrame(st.session_state.local_data['downtime'])
-        display_cols = ["User", "Timestamp", "Machine", "Shift", "Breakdown_Reason", "Duration_Mins"]
-        available_cols = [col for col in display_cols if col in local_df.columns]
-        st.dataframe(local_df[available_cols].head(10))
-
+        try:
+            # Convert to list of dictionaries first
+            data_for_df = []
+            for record in downtime_data:
+                if isinstance(record, dict):
+                    data_for_df.append(record)
+            
+            if data_for_df:
+                local_df = pd.DataFrame(data_for_df)
+                display_cols = ["User", "Timestamp", "Machine", "Shift", "Breakdown_Reason", "Duration_Mins"]
+                available_cols = [col for col in display_cols if col in local_df.columns]
+                if available_cols:
+                    st.dataframe(local_df[available_cols].head(10))
+                else:
+                    st.info("No displayable downtime data available")
+            else:
+                st.info("No valid downtime data available")
+        except Exception as e:
+            st.error(f"Error displaying downtime data: {str(e)}")
+            
 # ------------------ Main ------------------
 def main():
     st.set_page_config(page_title=APP_TITLE, page_icon="🗂️", layout="wide")
@@ -815,6 +881,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
