@@ -544,7 +544,6 @@ def admin_ui():
         st.rerun()
 
 # ------------------ Production UI ------------------
-# ------------------ Production UI ------------------
 def production_ui():
     st.subheader(f"Production Data Entry - User: {st.session_state.current_user}")
     
@@ -575,59 +574,60 @@ def production_ui():
         return
 
     st.write("Fill **all fields** below:")
-    values = {}
     
     col1, col2 = st.columns(2)
     
     with col1:
         # Date field (auto-filled with current date)
         current_date = datetime.now(SRI_LANKA_TZ).strftime("%Y-%m-%d")
-        values["Date"] = st.text_input("Date", value=current_date, key="date_field")
+        date_value = st.text_input("Date", value=current_date, key="date_field")
         
         # Machine dropdown
-        values["Machine"] = st.selectbox("Machine", options=machines, key="machine_field")
+        machine_value = st.selectbox("Machine", options=machines, key="machine_field")
         
         # Shift dropdown
-        values["Shift"] = st.selectbox("Shift", options=["Day", "Night"], key="shift_field")
+        shift_value = st.selectbox("Shift", options=["Day", "Night"], key="shift_field")
         
         # Team dropdown
-        values["Team"] = st.selectbox("Team", options=["A", "B", "C"], key="team_field")
+        team_value = st.selectbox("Team", options=["A", "B", "C"], key="team_field")
         
         # Item dropdown (from Production_Config)
-        values["Item"] = st.selectbox("Item", options=available_products, key="item_field")
+        item_value = st.selectbox("Item", options=available_products, key="item_field")
     
     with col2:
         # Target Quantity (cannot be 0)
-        values["Target_Quantity"] = st.number_input("Target Quantity", min_value=1, step=1, key="target_quantity")
+        target_quantity = st.number_input("Target Quantity", min_value=1, step=1, key="target_quantity")
         
         # Actual Quantity (cannot be 0)
-        values["Actual_Quantity"] = st.number_input("Actual Quantity", min_value=1, step=1, key="actual_quantity")
+        actual_quantity = st.number_input("Actual Quantity", min_value=1, step=1, key="actual_quantity")
         
         # Slow shot Count (can be 0)
-        values["Slow_shot_Count"] = st.number_input("Slow shot Count", min_value=0, step=1, key="slow_shot_count")
+        slow_shot_count = st.number_input("Slow shot Count", min_value=0, step=1, key="slow_shot_count")
         
         # Reject Quantity (can be 0)
-        values["Reject_Quantity"] = st.number_input("Reject Quantity", min_value=0, step=1, key="reject_quantity")
+        reject_quantity = st.number_input("Reject Quantity", min_value=0, step=1, key="reject_quantity")
         
-        # Good PCS Quantity (calculated field)
-        if values.get("Actual_Quantity", 0) > 0 and values.get("Reject_Quantity", 0) >= 0:
-            good_pcs = values["Actual_Quantity"] - values.get("Reject_Quantity", 0)
-            values["Good_PCS_Quantity"] = max(0, good_pcs)
-        else:
-            values["Good_PCS_Quantity"] = 0
-            
-        st.text_input("Good PCS Quantity", value=values["Good_PCS_Quantity"], key="good_pcs_display", disabled=True)
+        # Good PCS Quantity (calculated field - read only)
+        good_pcs_quantity = max(0, actual_quantity - reject_quantity)
+        
+        # Display Good PCS Quantity as read-only
+        st.text_input(
+            "Good PCS Quantity", 
+            value=good_pcs_quantity, 
+            key="good_pcs_display", 
+            disabled=True,
+            help="Calculated automatically (Actual Quantity - Reject Quantity)"
+        )
 
     comments = st.text_area("Comments", key="comments")
 
     if st.button("Submit", key="submit_btn"):
         # Validate required fields
-        required_fields = ["Target_Quantity", "Actual_Quantity"]
-        missing_fields = [f for f in required_fields if not values.get(f, 0)]
-        
-        if missing_fields:
-            st.error(f"Please fill in all required fields: {', '.join(missing_fields)}")
-        elif values.get("Actual_Quantity", 0) < values.get("Reject_Quantity", 0):
+        if target_quantity == 0:
+            st.error("Target Quantity cannot be zero")
+        elif actual_quantity == 0:
+            st.error("Actual Quantity cannot be zero")
+        elif reject_quantity > actual_quantity:
             st.error("Reject quantity cannot be greater than actual quantity")
         else:
             try:
@@ -636,7 +636,16 @@ def production_ui():
                     "User": st.session_state.current_user,
                     "EntryID": entry_id,
                     "Timestamp": get_sri_lanka_time(),
-                    **values,
+                    "Date": date_value,
+                    "Machine": machine_value,
+                    "Shift": shift_value,
+                    "Team": team_value,
+                    "Item": item_value,
+                    "Target_Quantity": target_quantity,
+                    "Actual_Quantity": actual_quantity,
+                    "Slow_shot_Count": slow_shot_count,
+                    "Reject_Quantity": reject_quantity,
+                    "Good_PCS_Quantity": good_pcs_quantity,
                     "Comments": comments
                 }
                 save_to_local('production', record)
@@ -916,5 +925,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
