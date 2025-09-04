@@ -10,54 +10,6 @@ import threading
 from functools import lru_cache
 import json
 
-# ------------------ Local Storage Helpers ------------------
-def save_to_local(data_type, record):
-    """Save data to local storage"""
-    try:
-        # Ensure record is a dictionary
-        if not isinstance(record, dict):
-            st.error("Invalid record format")
-            return
-            
-        # Get current data
-        key = f"die_casting_{data_type}"
-        current_data = st.session_state.get(key, [])
-        
-        # Add new record
-        current_data.append(record)
-        
-        # Save back to session state and local storage
-        st.session_state[key] = current_data
-        save_to_local_storage(data_type, current_data)
-        
-        # Mark as pending sync
-        st.session_state.die_casting_pending_sync = True
-        save_to_local_storage('pending_sync', True)
-        
-    except Exception as e:
-        st.error(f"Error saving data locally: {str(e)}")
-
-def load_from_local_storage(data_type, default=None):
-    """Load data from browser's local storage"""
-    try:
-        key = f"die_casting_{data_type}"
-        if key in st.session_state:
-            return json.loads(st.session_state[key])
-    except:
-        pass
-    return default if default is not None else []
-
-def clear_local_storage(data_type):
-    """Clear data from local storage"""
-    try:
-        key = f"die_casting_{data_type}"
-        if key in st.session_state:
-            del st.session_state[key]
-    except:
-        pass
-
-
-
 # ------------------ Settings ------------------
 APP_TITLE = "Die Casting Production"
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -97,6 +49,39 @@ DOWNTIME_DEFAULT_FIELDS = [
     "Duration_Mins"
 ]
 
+# ------------------ Local Storage Helpers ------------------
+def save_to_local_storage(data_type, data):
+    """Save data to browser's local storage"""
+    try:
+        key = f"die_casting_{data_type}"
+        json_data = json.dumps(data)
+        st.session_state[key] = json_data
+    except Exception as e:
+        st.error(f"Error saving to local storage: {str(e)}")
+
+def load_from_local_storage(data_type, default=None):
+    """Load data from browser's local storage"""
+    try:
+        key = f"die_casting_{data_type}"
+        if key in st.session_state:
+            loaded_data = st.session_state[key]
+            # Check if it's a JSON string and parse it
+            if isinstance(loaded_data, str):
+                return json.loads(loaded_data)
+            else:
+                return loaded_data
+    except Exception as e:
+        st.error(f"Error loading from local storage: {str(e)}")
+    return default if default is not None else []
+
+def clear_local_storage(data_type):
+    """Clear data from local storage"""
+    try:
+        key = f"die_casting_{data_type}"
+        if key in st.session_state:
+            del st.session_state[key]
+    except:
+        pass
 
 # ------------------ Initialize Session State ------------------
 if 'cfg' not in st.session_state:
@@ -111,8 +96,8 @@ if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 if 'user_role' not in st.session_state:
     st.session_state.user_role = ""
-if 'sheet_initialized' not in st.session_state:  # ADD THIS LINE
-    st.session_state.sheet_initialized = False   # ADD THIS LINE
+if 'sheet_initialized' not in st.session_state:
+    st.session_state.sheet_initialized = False
 
 # Initialize local data from storage
 if 'die_casting_production' not in st.session_state:
@@ -159,7 +144,7 @@ def get_gs_client():
             "token_uri": st.secrets["gcp_service_account"]["token_uri"],
             "auth_provider_x509_cert_url": st.secrets["gcp_service_account"]["auth_provider_x509_cert_url"],
             "client_x509_cert_url": st.secrets["gcp_service_account"]["client_x509_cert_url"]
-        }
+        ]
         
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         return gspread.authorize(creds)
@@ -308,9 +293,18 @@ def refresh_config_if_needed():
 def save_to_local(data_type, record):
     """Save data to local storage"""
     try:
-        # Get current data
+        # Ensure record is a dictionary
+        if not isinstance(record, dict):
+            st.error("Invalid record format")
+            return
+            
+        # Get current data - ensure it's always a list
         key = f"die_casting_{data_type}"
         current_data = st.session_state.get(key, [])
+        
+        # Make sure current_data is a list, not a string
+        if not isinstance(current_data, list):
+            current_data = []
         
         # Add new record
         current_data.append(record)
@@ -325,7 +319,6 @@ def save_to_local(data_type, record):
         
     except Exception as e:
         st.error(f"Error saving data locally: {str(e)}")
-
 
 def sync_with_google_sheets():
     """Sync local data with Google Sheets when connection is available"""
@@ -411,8 +404,6 @@ def sync_with_google_sheets():
         
     except Exception as e:
         st.warning(f"Sync failed: {str(e)}. Data remains saved locally.")
-
-
 
 # ------------------ Login System ------------------
 def login_system():
@@ -881,10 +872,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
