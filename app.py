@@ -607,17 +607,8 @@ def production_ui():
         # Reject Quantity (can be 0)
         reject_quantity = st.number_input("Reject Quantity", min_value=0, step=1, key="reject_quantity")
         
-        # Good PCS Quantity (calculated field - read only)
-        good_pcs_quantity = max(0, actual_quantity - reject_quantity)
-        
-        # Display Good PCS Quantity as read-only
-        st.text_input(
-            "Good PCS Quantity", 
-            value=good_pcs_quantity, 
-            key="good_pcs_display", 
-            disabled=True,
-            help="Calculated automatically (Actual Quantity - Reject Quantity)"
-        )
+        # Good PCS Quantity (manually entered)
+        good_pcs_quantity = st.number_input("Good PCS Quantity", min_value=0, step=1, key="good_pcs_quantity")
 
     comments = st.text_area("Comments", key="comments")
 
@@ -627,8 +618,12 @@ def production_ui():
             st.error("Target Quantity cannot be zero")
         elif actual_quantity == 0:
             st.error("Actual Quantity cannot be zero")
-        elif reject_quantity > actual_quantity:
-            st.error("Reject quantity cannot be greater than actual quantity")
+        elif good_pcs_quantity == 0:
+            st.error("Good PCS Quantity cannot be zero")
+        elif (actual_quantity - reject_quantity) != good_pcs_quantity:
+            st.warning(f"Note: Good PCS Quantity ({good_pcs_quantity}) doesn't match calculation (Actual {actual_quantity} - Reject {reject_quantity} = {actual_quantity - reject_quantity})")
+            # Still allow submission with warning
+            pass
         else:
             try:
                 entry_id = uuid.uuid4().hex
@@ -651,11 +646,6 @@ def production_ui():
                 save_to_local('production', record)
                 st.success(f"Saved locally! EntryID: {entry_id}")
                 
-                # Try to sync in background
-                if st.button("🔄 Sync with Google Sheets Now"):
-                    sync_with_google_sheets()
-                    st.rerun()
-                    
             except Exception as e:
                 st.error(f"Error saving data: {str(e)}")
 
@@ -682,6 +672,11 @@ def production_ui():
                 st.info("No valid production data available")
         except Exception as e:
             st.error(f"Error displaying data: {str(e)}")
+
+    # Sync button at the bottom
+    if st.button("🔄 Sync with Google Sheets Now"):
+        sync_with_google_sheets()
+        st.rerun()
 
 # ------------------ Quality UI ------------------
 def quality_ui():
@@ -925,6 +920,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
