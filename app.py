@@ -10,6 +10,37 @@ import threading
 from functools import lru_cache
 import json
 
+# ------------------ Local Storage Helpers ------------------
+def save_to_local_storage(data_type, data):
+    """Save data to browser's local storage"""
+    try:
+        key = f"die_casting_{data_type}"
+        json_data = json.dumps(data)
+        st.session_state[key] = json_data
+    except Exception as e:
+        st.error(f"Error saving to local storage: {str(e)}")
+
+def load_from_local_storage(data_type, default=None):
+    """Load data from browser's local storage"""
+    try:
+        key = f"die_casting_{data_type}"
+        if key in st.session_state:
+            return json.loads(st.session_state[key])
+    except:
+        pass
+    return default if default is not None else []
+
+def clear_local_storage(data_type):
+    """Clear data from local storage"""
+    try:
+        key = f"die_casting_{data_type}"
+        if key in st.session_state:
+            del st.session_state[key]
+    except:
+        pass
+
+
+
 # ------------------ Settings ------------------
 APP_TITLE = "Die Casting Production"
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -49,6 +80,7 @@ DOWNTIME_DEFAULT_FIELDS = [
     "Duration_Mins"
 ]
 
+
 # ------------------ Initialize Session State ------------------
 if 'cfg' not in st.session_state:
     st.session_state.cfg = {}
@@ -62,15 +94,16 @@ if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 if 'user_role' not in st.session_state:
     st.session_state.user_role = ""
-if 'local_data' not in st.session_state:
-    st.session_state.local_data = {
-        'production': [],
-        'quality': [],
-        'downtime': [],
-        'pending_sync': False
-    }
-if 'sheet_initialized' not in st.session_state:
-    st.session_state.sheet_initialized = False
+
+# Initialize local data from storage (remove the old local_data initialization)
+if 'die_casting_production' not in st.session_state:
+    st.session_state.die_casting_production = load_from_local_storage('production', [])
+if 'die_casting_quality' not in st.session_state:
+    st.session_state.die_casting_quality = load_from_local_storage('quality', [])
+if 'die_casting_downtime' not in st.session_state:
+    st.session_state.die_casting_downtime = load_from_local_storage('downtime', [])
+if 'die_casting_pending_sync' not in st.session_state:
+    st.session_state.die_casting_pending_sync = load_from_local_storage('pending_sync', False)
 
 # ------------------ Helper Functions ------------------
 def get_sri_lanka_time():
@@ -255,12 +288,29 @@ def refresh_config_if_needed():
 # ------------------ Local Data Management ------------------
 def save_to_local(data_type, record):
     """Save data to local storage"""
-    st.session_state.local_data[data_type].append(record)
-    st.session_state.local_data['pending_sync'] = True
+    try:
+        # Get current data
+        key = f"die_casting_{data_type}"
+        current_data = st.session_state.get(key, [])
+        
+        # Add new record
+        current_data.append(record)
+        
+        # Save back to session state and local storage
+        st.session_state[key] = current_data
+        save_to_local_storage(data_type, current_data)
+        
+        # Mark as pending sync
+        st.session_state.die_casting_pending_sync = True
+        save_to_local_storage('pending_sync', True)
+        
+    except Exception as e:
+        st.error(f"Error saving data locally: {str(e)}")
+
 
 def sync_with_google_sheets():
     """Sync local data with Google Sheets when connection is available"""
-    if not st.session_state.local_data['pending_sync']:
+    if not st.session_state.get('die_casting_pending_sync', False):
         st.info("No data pending sync")
         return
     
@@ -278,10 +328,11 @@ def sync_with_google_sheets():
         
         # Sync production data
         sync_count = 0
-        if st.session_state.local_data['production']:
+        production_data = st.session_state.get('die_casting_production', [])
+        if production_data:
             try:
                 ws_history = sh.worksheet("History")
-                for record in st.session_state.local_data['production']:
+                for record in production_data:
                     headers = ["User", "EntryID", "Timestamp", "Product", "Comments"] + st.session_state.cfg.get(record["Product"], DEFAULT_SUBTOPICS.copy())
                     row = [record.get(h, "") for h in headers]
                     ws_history.append_row(row, value_input_option="USER_ENTERED")
@@ -291,10 +342,11 @@ def sync_with_google_sheets():
                 st.error(f"Error syncing production data: {str(e)}")
         
         # Sync quality data
-        if st.session_state.local_data['quality']:
+        quality_data = st.session_state.get('die_casting_quality', [])
+        if quality_data:
             try:
                 ws_quality_history = sh.worksheet("Quality_History")
-                for record in st.session_state.local_data['quality']:
+                for record in quality_data:
                     headers = ["User", "EntryID", "Timestamp", "Product"] + QUALITY_DEFAULT_FIELDS
                     row = [record.get(h, "") for h in headers]
                     ws_quality_history.append_row(row, value_input_option="USER_ENTERED")
@@ -304,10 +356,11 @@ def sync_with_google_sheets():
                 st.error(f"Error syncing quality data: {str(e)}")
         
         # Sync downtime data
-        if st.session_state.local_data['downtime']:
+        downtime_data = st.session_state.get('die_casting_downtime', [])
+        if downtime_data:
             try:
                 ws_downtime_history = sh.worksheet("Downtime_History")
-                for record in st.session_state.local_data['downtime']:
+                for record in downtime_data:
                     headers = ["User", "EntryID", "Timestamp"] + DOWNTIME_DEFAULT_FIELDS + ["Comments"]
                     row = [record.get(h, "") for h in headers]
                     ws_downtime_history.append_row(row, value_input_option="USER_ENTERED")
@@ -317,11 +370,18 @@ def sync_with_google_sheets():
                 st.error(f"Error syncing downtime data: {str(e)}")
         
         if sync_count > 0:
-            # Clear synced data
-            st.session_state.local_data['production'] = []
-            st.session_state.local_data['quality'] = []
-            st.session_state.local_data['downtime'] = []
-            st.session_state.local_data['pending_sync'] = False
+            # Clear synced data from local storage
+            st.session_state.die_casting_production = []
+            st.session_state.die_casting_quality = []
+            st.session_state.die_casting_downtime = []
+            st.session_state.die_casting_pending_sync = False
+            
+            # Clear from browser storage
+            clear_local_storage('production')
+            clear_local_storage('quality')
+            clear_local_storage('downtime')
+            clear_local_storage('pending_sync')
+            
             st.success(f"Successfully synced {sync_count} records with Google Sheets!")
             
             # Also refresh config after sync
@@ -332,6 +392,8 @@ def sync_with_google_sheets():
         
     except Exception as e:
         st.warning(f"Sync failed: {str(e)}. Data remains saved locally.")
+
+
 
 # ------------------ Login System ------------------
 def login_system():
@@ -535,9 +597,10 @@ def production_ui():
                 st.error(f"Error saving data: {str(e)}")
 
     # Display local entries
-    if st.session_state.local_data['production']:
+    production_data = st.session_state.get('die_casting_production', [])
+    if production_data:
         st.subheader("Local Entries (Pending Sync)")
-        local_df = pd.DataFrame(st.session_state.local_data['production'])
+        local_df = pd.DataFrame(st.session_state.get('die_casting_production', []))
         st.dataframe(local_df[["User", "Timestamp", "Product"]].head(10))
 
 # ------------------ Quality UI ------------------
@@ -716,7 +779,7 @@ def main():
     st.title(APP_TITLE)
 
     # Show sync status
-    if st.session_state.local_data['pending_sync']:
+    if st.session_state.get('die_casting_pending_sync', False):
         st.warning("⚠️ Data pending sync with Google Sheets")
         if st.button("🔄 Try to Sync Now"):
             sync_with_google_sheets()
@@ -750,6 +813,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
