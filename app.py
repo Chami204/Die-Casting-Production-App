@@ -668,9 +668,6 @@ def production_ui():
             st.error("Actual Quantity cannot be zero")
         elif good_pcs_quantity == 0:
             st.error("Good PCS Quantity cannot be zero")
-        elif (actual_quantity - reject_quantity) != good_pcs_quantity:
-            st.warning(f"Note: Good PCS Quantity ({good_pcs_quantity}) doesn't match calculation (Actual {actual_quantity} - Reject {reject_quantity} = {actual_quantity - reject_quantity})")
-            # Still allow submission with warning
             pass
         else:
             try:
@@ -968,6 +965,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
