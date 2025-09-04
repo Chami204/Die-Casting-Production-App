@@ -632,8 +632,8 @@ def downtime_ui():
     
     with col1:
         values["Machine"] = st.selectbox("Machine", options=machines, key="downtime_machine")
-        values["Shift"] = st.selectbox("Shift", options=["A", "B", "C", "General"], key="downtime_shift")
-        values["Team"] = st.text_input("Team", key="downtime_team")
+        values["Shift"] = st.selectbox("Shift", options=["Night", "Day"], key="downtime_shift")
+        values["Team"] = st.text_input("Team", options=["A", "B","C"],key="downtime_team")
     
     with col2:
         values["Planned_Item"] = st.selectbox("Planned Item", options=available_products, key="downtime_planned_item")
@@ -712,4 +712,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
