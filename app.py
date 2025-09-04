@@ -55,14 +55,39 @@ DOWNTIME_DEFAULT_FIELDS = [
 ]
 
 # ------------------ Local Storage Helpers ------------------
-def save_to_local_storage(data_type, data):
-    """Save data to browser's local storage"""
+def save_to_local(data_type, record):
+    """Save data to local storage"""
     try:
+        # Ensure record is a dictionary
+        if not isinstance(record, dict):
+            st.error("Invalid record format")
+            return
+            
+        # Get current data - ensure it's always a list of dictionaries
         key = f"die_casting_{data_type}"
-        json_data = json.dumps(data)
-        st.session_state[key] = json_data
+        current_data = st.session_state.get(key, [])
+        
+        # Make sure current_data is a list, not a string, and contains only dictionaries
+        if not isinstance(current_data, list):
+            current_data = []
+        else:
+            # Filter out any non-dictionary items
+            current_data = [item for item in current_data if isinstance(item, dict)]
+        
+        # Add new record
+        current_data.append(record)
+        
+        # Save back to session state and local storage
+        st.session_state[key] = current_data
+        save_to_local_storage(data_type, current_data)
+        
+        # Mark as pending sync
+        st.session_state.die_casting_pending_sync = True
+        save_to_local_storage('pending_sync', True)
+        
     except Exception as e:
-        st.error(f"Error saving to local storage: {str(e)}")
+        st.error(f"Error saving data locally: {str(e)}")
+
 
 def load_from_local_storage(data_type, default=None):
     """Load data from browser's local storage"""
@@ -346,16 +371,23 @@ def sync_with_google_sheets():
         # Sync production data
         sync_count = 0
         production_data = st.session_state.get('die_casting_production', [])
-        # In sync_with_google_sheets function, update the production data section:
         if production_data:
             try:
                 ws_history = sh.worksheet("History")
                 for record in production_data:
-                    headers = ["User", "EntryID", "Timestamp", "Comments"] + DEFAULT_SUBTOPICS
-                    row = [record.get(h, "") for h in headers]
-                    ws_history.append_row(row, value_input_option="USER_ENTERED")
-                    sync_count += 1
-                    time.sleep(1)  # Delay between writes
+                    # Ensure record is a dictionary, not a string
+                    if isinstance(record, str):
+                        try:
+                            record = json.loads(record)
+                        except:
+                            continue
+                    
+                    if isinstance(record, dict):
+                        headers = ["User", "EntryID", "Timestamp", "Comments"] + DEFAULT_SUBTOPICS
+                        row = [record.get(h, "") for h in headers]
+                        ws_history.append_row(row, value_input_option="USER_ENTERED")
+                        sync_count += 1
+                        time.sleep(1)  # Delay between writes
             except Exception as e:
                 st.error(f"Error syncing production data: {str(e)}")
         
@@ -365,11 +397,19 @@ def sync_with_google_sheets():
             try:
                 ws_quality_history = sh.worksheet("Quality_History")
                 for record in quality_data:
-                    headers = ["User", "EntryID", "Timestamp", "Product"] + QUALITY_DEFAULT_FIELDS
-                    row = [record.get(h, "") for h in headers]
-                    ws_quality_history.append_row(row, value_input_option="USER_ENTERED")
-                    sync_count += 1
-                    time.sleep(1)  # Delay between writes
+                    # Ensure record is a dictionary, not a string
+                    if isinstance(record, str):
+                        try:
+                            record = json.loads(record)
+                        except:
+                            continue
+                    
+                    if isinstance(record, dict):
+                        headers = ["User", "EntryID", "Timestamp", "Product"] + QUALITY_DEFAULT_FIELDS
+                        row = [record.get(h, "") for h in headers]
+                        ws_quality_history.append_row(row, value_input_option="USER_ENTERED")
+                        sync_count += 1
+                        time.sleep(1)  # Delay between writes
             except Exception as e:
                 st.error(f"Error syncing quality data: {str(e)}")
         
@@ -379,11 +419,19 @@ def sync_with_google_sheets():
             try:
                 ws_downtime_history = sh.worksheet("Downtime_History")
                 for record in downtime_data:
-                    headers = ["User", "EntryID", "Timestamp"] + DOWNTIME_DEFAULT_FIELDS + ["Comments"]
-                    row = [record.get(h, "") for h in headers]
-                    ws_downtime_history.append_row(row, value_input_option="USER_ENTERED")
-                    sync_count += 1
-                    time.sleep(1)  # Delay between writes
+                    # Ensure record is a dictionary, not a string
+                    if isinstance(record, str):
+                        try:
+                            record = json.loads(record)
+                        except:
+                            continue
+                    
+                    if isinstance(record, dict):
+                        headers = ["User", "EntryID", "Timestamp"] + DOWNTIME_DEFAULT_FIELDS + ["Comments"]
+                        row = [record.get(h, "") for h in headers]
+                        ws_downtime_history.append_row(row, value_input_option="USER_ENTERED")
+                        sync_count += 1
+                        time.sleep(1)  # Delay between writes
             except Exception as e:
                 st.error(f"Error syncing downtime data: {str(e)}")
         
@@ -920,6 +968,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
