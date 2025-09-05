@@ -212,7 +212,7 @@ def quality_data_entry(logged_user):
 
         # ------------------ LOGOUT BUTTON ------------------
     if st.button("Logout"):
-        st.session_state.prod_logged_in = False
+        st.session_state.qual_logged_in = False
         st.session_state.logged_user = ""
         st.experimental_rerun()
 
@@ -251,7 +251,7 @@ def downtime_data_entry(logged_user):
 
         # ------------------ LOGOUT BUTTON ------------------
     if st.button("Logout"):
-        st.session_state.prod_logged_in = False
+        st.session_state.down_logged_in = False
         st.session_state.logged_user = ""
         st.experimental_rerun()
 
@@ -320,5 +320,6 @@ else:
                 st.experimental_rerun()
             else:
                 st.error("❌ Incorrect password!")
+
 
 
