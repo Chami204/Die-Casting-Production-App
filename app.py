@@ -101,9 +101,6 @@ def sync_to_google_sheet():
         # Convert local data to DataFrame
         df_local = pd.DataFrame(st.session_state.local_storage)
 
-        # ✅ Replace NaN with empty string to avoid JSON issues
-        df_local = df_local.fillna("")
-
         # ---- Step 1: Get current Google Sheet headers ----
         current_headers = history_ws.row_values(1)  # first row is header
 
@@ -121,6 +118,9 @@ def sync_to_google_sheet():
         # ---- Step 4: Reorder DataFrame columns to match updated headers ----
         df_local = df_local.reindex(columns=updated_headers)
 
+        # ✅ Fill NaN with empty strings to avoid JSON errors
+        df_local = df_local.fillna("")
+
         # ---- Step 5: Append the data correctly ----
         rows_to_add = df_local.values.tolist()
         history_ws.append_rows(rows_to_add)
@@ -131,6 +131,7 @@ def sync_to_google_sheet():
 
     except Exception as e:
         st.error(f"Error syncing data: {str(e)}")
+
 
 
 
@@ -239,6 +240,7 @@ elif choice == "Quality Team Login":
 # ------------------ DOWNTIME DATA RECORDINGS ------------------
 elif choice == "Downtime Data Recordings":
     st.header("⏱️ Downtime Data Recordings (Coming Soon...)")
+
 
 
 
