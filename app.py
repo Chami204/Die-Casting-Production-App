@@ -84,7 +84,6 @@ def save_locally(data, storage_key):
         st.session_state[storage_key] = []
     st.session_state[storage_key].append(data)
     st.success("Data saved locally!")
-    st.experimental_rerun()  # Go back to top after saving
 
 # ------------------ SYNC FUNCTION ------------------
 def sync_local_data_to_sheet(local_key, history_sheet_name):
@@ -101,24 +100,26 @@ def sync_local_data_to_sheet(local_key, history_sheet_name):
         st.error(f"Worksheet '{history_sheet_name}' not found!")
         return
 
+    # Get existing sheet headers
     existing_cols = ws.row_values(1) if ws.row_values(1) else []
     all_keys = set(existing_cols)
     for entry in st.session_state[local_key]:
         all_keys.update(entry.keys())
     all_keys = list(all_keys)
 
-    if existing_cols != all_keys:
-        ws.update('1:1', [all_keys])
+    # Ensure User, Product, DateTime are first columns
+    ordered_cols = ["User", "Product", "DateTime"] + [col for col in all_keys if col not in ["User", "Product", "DateTime"]]
+    ws.update('1:1', [ordered_cols])
 
+    # Prepare rows
     rows_to_append = []
     for entry in st.session_state[local_key]:
-        row = [entry.get(col, "") for col in all_keys]
+        row = [entry.get(col, "") for col in ordered_cols]
         rows_to_append.append(row)
 
     ws.append_rows(rows_to_append, value_input_option="USER_ENTERED")
     st.session_state[local_key] = []
     st.success(f"✅ {len(rows_to_append)} records synced to {history_sheet_name}!")
-    st.experimental_rerun()  # Go back to top after syncing
 
 # ------------------ DATA ENTRY FUNCTIONS ------------------
 def production_data_entry(logged_user):
@@ -149,8 +150,11 @@ def production_data_entry(logged_user):
 
     if submitted:
         save_locally(entry, "prod_local_data")
+        st.experimental_rerun()
+
     if sync_button:
         sync_local_data_to_sheet("prod_local_data", "Production_History")
+        st.experimental_rerun()
 
     if st.button("Logout"):
         st.session_state.prod_logged_in = False
@@ -185,8 +189,10 @@ def quality_data_entry(logged_user):
 
     if submitted:
         save_locally(entry, "qual_local_data")
+        st.experimental_rerun()
     if sync_button:
         sync_local_data_to_sheet("qual_local_data", "Quality_History")
+        st.experimental_rerun()
 
     if st.button("Logout"):
         st.session_state.qual_logged_in = False
@@ -206,7 +212,7 @@ def downtime_data_entry(logged_user):
     now = datetime.now(SRI_LANKA_TZ).strftime(TIME_FORMAT)
     st.write(f"📅 Date & Time: {now}")
 
-    entry = {"User": logged_user, "Planned Item": selected_item, "DateTime": now}
+    entry = {"User": logged_user, "Product": selected_item, "DateTime": now}
 
     with st.form(key="downtime_entry_form"):
         for col in df.columns:
@@ -221,8 +227,10 @@ def downtime_data_entry(logged_user):
 
     if submitted:
         save_locally(entry, "downtime_local_data")
+        st.experimental_rerun()
     if sync_button:
         sync_local_data_to_sheet("downtime_local_data", "Downtime_History")
+        st.experimental_rerun()
 
     if st.button("Logout"):
         st.session_state.downtime_logged_in = False
