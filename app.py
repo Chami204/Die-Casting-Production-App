@@ -85,7 +85,7 @@ def save_locally(data):
 
 # ------------------ SYNC DATA TO GOOGLE SHEET ------------------
 def sync_to_google_sheet():
-    """Upload locally saved data to Google Sheet History sheet."""
+    """Upload locally saved data to Google Sheet History sheet with dynamic column handling."""
     if "local_storage" not in st.session_state or len(st.session_state.local_storage) == 0:
         st.warning("⚠️ No locally saved data to sync.")
         return
@@ -101,30 +101,37 @@ def sync_to_google_sheet():
         # Convert local data to DataFrame
         df_local = pd.DataFrame(st.session_state.local_storage)
 
-        # ✅ Replace NaN or None with empty strings to avoid JSON errors
+        # ✅ Replace NaN with empty string to avoid JSON issues
         df_local = df_local.fillna("")
 
-        # Ensure headers match
-        existing_data = history_ws.get_all_records()
-        if existing_data:
-            start_row = len(existing_data) + 2  # +2 for header row
-        else:
-            # If sheet is empty, set headers first
-            history_ws.update([df_local.columns.tolist()])
-            start_row = 2
+        # ---- Step 1: Get current Google Sheet headers ----
+        current_headers = history_ws.row_values(1)  # first row is header
 
-        # Prepare data for appending
+        # ---- Step 2: Combine headers to ensure no missing columns ----
+        updated_headers = list(current_headers)  # copy existing
+        for col in df_local.columns:
+            if col not in updated_headers:
+                updated_headers.append(col)  # add new subtopics dynamically
+
+        # ---- Step 3: If headers changed, update header row in sheet ----
+        if updated_headers != current_headers:
+            history_ws.update('A1', [updated_headers])
+            st.info("📝 Headers updated in Google Sheet to include new subtopics!")
+
+        # ---- Step 4: Reorder DataFrame columns to match updated headers ----
+        df_local = df_local.reindex(columns=updated_headers)
+
+        # ---- Step 5: Append the data correctly ----
         rows_to_add = df_local.values.tolist()
-
-        # Append data
         history_ws.append_rows(rows_to_add)
         st.success(f"✅ {len(rows_to_add)} records synced to Google Sheet!")
 
-        # Clear local storage after syncing
+        # Clear local storage after successful sync
         st.session_state.local_storage = []
 
     except Exception as e:
         st.error(f"Error syncing data: {str(e)}")
+
 
 
 # ------------------ LOAD CONFIG DATA ------------------
@@ -232,5 +239,6 @@ elif choice == "Quality Team Login":
 # ------------------ DOWNTIME DATA RECORDINGS ------------------
 elif choice == "Downtime Data Recordings":
     st.header("⏱️ Downtime Data Recordings (Coming Soon...)")
+
 
 
