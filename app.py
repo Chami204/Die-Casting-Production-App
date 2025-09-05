@@ -274,50 +274,80 @@ if choice == "Home":
 
 
 # ------------------ PRODUCTION TEAM LOGIN ------------------
+# ------------------ PRODUCTION TEAM LOGIN ------------------
 elif choice == "Production Team Login":
     st.header("🔑 Production Team Login")
-    usernames = list(USER_CREDENTIALS.keys())
-    selected_user = st.selectbox("Select Username", usernames)
-    entered_password = st.text_input("Enter Password", type="password")
 
-    if st.button("Login"):
-        actual_password = USER_CREDENTIALS.get(selected_user)
-        if actual_password and entered_password == actual_password:
-            st.session_state.prod_logged_in = True
-            st.session_state.logged_user = selected_user
-            st.success(f"Welcome, {selected_user}!")
-            production_data_entry(logged_user=selected_user)
-        else:
-            st.error("❌ Incorrect password!")
+    if "prod_logged_in" not in st.session_state:
+        st.session_state.prod_logged_in = False
+        st.session_state.logged_user = ""
+
+    if not st.session_state.prod_logged_in:
+        # Show login form
+        usernames = list(USER_CREDENTIALS.keys())
+        selected_user = st.selectbox("Select Username", usernames)
+        entered_password = st.text_input("Enter Password", type="password")
+
+        if st.button("Login"):
+            actual_password = USER_CREDENTIALS.get(selected_user)
+            if actual_password and entered_password == actual_password:
+                st.session_state.prod_logged_in = True
+                st.session_state.logged_user = selected_user
+                st.success(f"Welcome, {selected_user}!")
+                st.experimental_rerun()
+            else:
+                st.error("❌ Incorrect password!")
+    else:
+        # User is logged in, show data entry
+        production_data_entry(logged_user=st.session_state.logged_user)
+
 
 # ------------------ QUALITY TEAM LOGIN ------------------
 elif choice == "Quality Team Login":
-    st.header("🔑 Quality Team Login")
-    entered_user = st.text_input("Enter Your Name")
-    entered_pass = st.text_input("Enter Password", type="password")
+    if "qual_logged_in" not in st.session_state:
+        st.session_state.qual_logged_in = False
+        st.session_state.qual_logged_user = ""
 
-    if st.button("Login"):
-        if entered_pass == QUALITY_SHARED_PASSWORD:
-            st.session_state.qual_logged_in = True
-            st.session_state.qual_logged_user = entered_user
-            st.success(f"Welcome, {entered_user}!")
-            quality_data_entry(logged_user=entered_user)
-        else:
-            st.error("❌ Incorrect password!")
+    if not st.session_state.qual_logged_in:
+        entered_user = st.text_input("Enter Your Name")
+        entered_pass = st.text_input("Enter Password", type="password")
+        if st.button("Login"):
+            if entered_pass == QUALITY_SHARED_PASSWORD:
+                st.session_state.qual_logged_in = True
+                st.session_state.qual_logged_user = entered_user
+                st.success(f"Welcome, {entered_user}!")
+                st.experimental_rerun()
+            else:
+                st.error("❌ Incorrect password!")
+    else:
+        config_df = load_config(SHEET_NAME, QUALITY_CONFIG_SHEET)
+        data_entry("Quality", config_df, st.session_state.qual_logged_user, "qual_local_data", "Quality_History")
 
 # ------------------ DOWNTIME DATA RECORDINGS ------------------
 elif choice == "Downtime Data Recordings":
-    st.header("🔑 Downtime Team Login")
-    entered_user = st.text_input("Enter Your Name")
-    entered_pass = st.text_input("Enter Password", type="password")
+    if "downtime_logged_in" not in st.session_state:
+        st.session_state.downtime_logged_in = False
+        st.session_state.downtime_logged_user = ""
 
-    if st.button("Login"):
-        if entered_pass == DOWNTIME_SHARED_PASSWORD:
-            st.session_state.downtime_logged_in = True
-            st.session_state.downtime_logged_user = entered_user
-            st.success(f"Welcome, {entered_user}!")
-            downtime_data_entry(logged_user=entered_user)
-        else:
-            st.error("❌ Incorrect password!")
+    if not st.session_state.downtime_logged_in:
+        entered_user = st.text_input("Enter Your Name")
+        entered_pass = st.text_input("Enter Password", type="password")
+        if st.button("Login"):
+            if entered_pass == DOWNTIME_SHARED_PASSWORD:
+                st.session_state.downtime_logged_in = True
+                st.session_state.downtime_logged_user = entered_user
+                st.success(f"Welcome, {entered_user}!")
+                st.experimental_rerun()
+            else:
+                st.error("❌ Incorrect password!")
+    else:
+        # Downtime uses Product from Production_Config
+        prod_config_df = load_config(SHEET_NAME, PRODUCTION_CONFIG_SHEET)
+        downtime_config_df = load_config(SHEET_NAME, DOWNTIME_CONFIG_SHEET)
+        if not prod_config_df.empty:
+            # Add Planned Item column
+            downtime_config_df["Product"] = st.selectbox("Select Planned Item", prod_config_df["Product"].unique())
+        data_entry("Downtime", downtime_config_df, st.session_state.downtime_logged_user, "downtime_local_data", "Downtime_History", include_product=False)
+
 
 
