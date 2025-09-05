@@ -693,15 +693,6 @@ def production_ui():
         # Date & Time field
         date_value = st.text_input("Date & Time", value=sri_time, key="date_field")
         
-        # Machine dropdown
-        machine_value = st.selectbox("Machine", options=machines, key="machine_field")
-        
-        # Shift dropdown
-        shift_value = st.selectbox("Shift", options=["Day", "Night"], key="shift_field")
-        
-        # Team dropdown
-        team_value = st.selectbox("Team", options=["A", "B", "C"], key="team_field")
-        
         # Item dropdown (from Production_Config or cfg)
         item_value = st.selectbox("Item", options=available_items, key="item_field")
     
@@ -1059,6 +1050,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
