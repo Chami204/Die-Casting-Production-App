@@ -121,6 +121,25 @@ def sync_local_data_to_sheet(local_key, history_sheet_name):
     st.session_state[local_key] = []
     st.success(f"✅ {len(rows_to_append)} records synced to {history_sheet_name}!")
 
+def sync_all_local_data():
+    synced_sections = []
+
+    if "prod_local_data" in st.session_state and st.session_state["prod_local_data"]:
+        sync_local_data_to_sheet("prod_local_data", "Production_History")
+        synced_sections.append("Production")
+    if "qual_local_data" in st.session_state and st.session_state["qual_local_data"]:
+        sync_local_data_to_sheet("qual_local_data", "Quality_History")
+        synced_sections.append("Quality")
+    if "downtime_local_data" in st.session_state and st.session_state["downtime_local_data"]:
+        sync_local_data_to_sheet("downtime_local_data", "Downtime_History")
+        synced_sections.append("Downtime")
+
+    if not synced_sections:
+        st.info("No local data to sync.")
+    else:
+        st.success(f"✅ Synced data for: {', '.join(synced_sections)}")
+
+
 # ------------------ DATA ENTRY FUNCTIONS ------------------
 def production_data_entry(logged_user):
     df = st.session_state.production_config_df
@@ -248,6 +267,12 @@ if choice == "Home":
     st.markdown("<h2 style='text-align: center;'>Welcome to Die Casting Production App</h2>", unsafe_allow_html=True)
     st.markdown("<h4 style='text-align: center;'>Please select a section to continue</h4>", unsafe_allow_html=True)
 
+    st.markdown("---")
+    st.header("⚡ Sync Any Unsynced Local Data")
+    if st.button("💾 Sync All Local Data"):
+        sync_all_local_data()
+
+
 # ------------------ PRODUCTION TEAM LOGIN ------------------
 elif choice == "Production Team Login":
     st.header("🔑 Production Team Login")
@@ -294,4 +319,5 @@ elif choice == "Downtime Data Recordings":
             downtime_data_entry(logged_user=entered_user)
         else:
             st.error("❌ Incorrect password!")
+
 
