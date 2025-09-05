@@ -7,7 +7,7 @@ import pytz
 
 # ------------------ SETTINGS ------------------
 APP_TITLE = "Die Casting Production"
-SHEET_NAME = "Your_Google_Sheet_Name"  # Replace with your Google Sheet name
+SHEET_NAME = "FlowApp_Data"  # Replace with your Google Sheet name
 PRODUCTION_CONFIG_SHEET = "Production_Config"
 HISTORY_SHEET = "History"  # Sheet name where data will be synced
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -15,7 +15,7 @@ SRI_LANKA_TZ = pytz.timezone('Asia/Colombo')
 
 # ------------------ USER CREDENTIALS ------------------
 USER_CREDENTIALS = {
-    "user1": "pass123",
+    "chami": "123",
     "user2": "password",
     "user3": "abc123"
 }
@@ -228,3 +228,4 @@ elif choice == "Quality Team Login":
 # ------------------ DOWNTIME DATA RECORDINGS ------------------
 elif choice == "Downtime Data Recordings":
     st.header("⏱️ Downtime Data Recordings (Coming Soon...)")
+
