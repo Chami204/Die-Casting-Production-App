@@ -646,38 +646,23 @@ def production_ui():
     production_data = st.session_state.get('die_casting_production', [])
     if production_data:
         st.subheader("Local Entries (Pending Sync)")
-        try:
-            # Convert to list of dictionaries first
-            data_for_df = []
-            for record in production_data:
-                if isinstance(record, dict):
-                    data_for_df.append(record)
-            
-            if data_for_df:
-                local_df = pd.DataFrame(data_for_df)
-                
-                # Check what columns are actually available
-                available_columns = local_df.columns.tolist()
-                st.write(f"Available columns: {available_columns}")  # Debug info
-                
-                # Try to display common columns that might exist
-                display_cols = []
-                for col in ["User", "Timestamp", "Date", "Machine", "Shift", "Item", "Target_Quantity", "Actual_Quantity", "Good_PCS_Quantity"]:
-                    if col in local_df.columns:
-                        display_cols.append(col)
-                
-                if display_cols:
-                    st.dataframe(local_df[display_cols].head(10))
-                else:
-                    # Show all available columns if the preferred ones aren't found
-                    st.dataframe(local_df.head(10))
-            else:
-                st.info("No valid production data available")
-        except Exception as e:
-            st.error(f"Error displaying data: {str(e)}")
-            # Show raw data for debugging
-            st.write("Raw data for debugging:")
-            st.write(production_data)
+        
+        # Simple table display without DataFrame
+        for i, record in enumerate(production_data):
+            if isinstance(record, dict):
+                with st.expander(f"Entry {i+1} - {record.get('Timestamp', 'No timestamp')}"):
+                    st.write(f"**User:** {record.get('User', 'N/A')}")
+                    st.write(f"**Date:** {record.get('Date', 'N/A')}")
+                    st.write(f"**Machine:** {record.get('Machine', 'N/A')}")
+                    st.write(f"**Shift:** {record.get('Shift', 'N/A')}")
+                    st.write(f"**Item:** {record.get('Item', 'N/A')}")
+                    st.write(f"**Target Quantity:** {record.get('Target_Quantity', 'N/A')}")
+                    st.write(f"**Actual Quantity:** {record.get('Actual_Quantity', 'N/A')}")
+                    st.write(f"**Good PCS Quantity:** {record.get('Good_PCS_Quantity', 'N/A')}")
+                    st.write(f"**Reject Quantity:** {record.get('Reject_Quantity', 'N/A')}")
+                    st.write(f"**Slow shot Count:** {record.get('Slow_shot_Count', 'N/A')}")
+                    if record.get('Comments'):
+                        st.write(f"**Comments:** {record.get('Comments')}")
 
 # ------------------ Quality UI ------------------
 def quality_ui():
@@ -921,6 +906,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
