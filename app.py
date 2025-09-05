@@ -662,14 +662,31 @@ def production_ui():
     record = {
         "User": st.session_state.current_user,
         "EntryID": uuid.uuid4().hex,
-        "Timestamp": get_sri_lanka_time(),
+        "Timestamp": get_sri_lanka_time(),  # always capture current SL time
         "Item Name": selected_item
     }
+
+    # Helper for Sri Lankan date
+    current_sri_lanka_time = get_sri_lanka_time()
+    current_date = current_sri_lanka_time.split(" ")[0]  # Extract YYYY-MM-DD from timestamp
 
     for _, row in filtered_config.iterrows():
         subtopic = str(row["Subtopic"]).strip()
         dropdown_flag = str(row["Dropdown or Not"]).strip().lower() == "yes"
 
+        # --- Special Case: Timestamp ---
+        if subtopic.lower() == "timestamp":
+            st.text_input(subtopic, value=current_sri_lanka_time, disabled=True, key=f"subtopic_{subtopic}")
+            record[subtopic] = current_sri_lanka_time
+            continue
+
+        # --- Special Case: Date ---
+        if subtopic.lower() == "date":
+            st.text_input(subtopic, value=current_date, disabled=True, key=f"subtopic_{subtopic}")
+            record[subtopic] = current_date
+            continue
+
+        # --- Normal handling for other subtopics ---
         if dropdown_flag:
             options = [opt.strip() for opt in str(row["Dropdown Options"]).split(",") if opt.strip()]
             if options:
@@ -684,7 +701,7 @@ def production_ui():
 
     # --- Step 3: Submit and Update History Dynamically ---
     if st.button("Submit", key="submit_btn"):
-        # Validate empty fields
+        # Validate empty fields except "Comments"
         if any(value == "" for key, value in record.items() if key not in ["Comments"]):
             st.error("Please fill all required fields before submitting.")
         else:
@@ -736,6 +753,7 @@ def production_ui():
     if st.button("🔄 Sync with Google Sheets Now"):
         sync_with_google_sheets()
         st.rerun()
+
 
 
 # ------------------ Quality UI ------------------
@@ -988,4 +1006,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
