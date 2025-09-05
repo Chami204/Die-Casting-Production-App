@@ -453,27 +453,35 @@ def sync_with_google_sheets():
             except Exception as e:
                 st.error(f"Error syncing quality data: {str(e)}")
         
-        # Sync downtime data (unchanged logic)
+        # Display local downtime entries
         downtime_data = st.session_state.get('die_casting_downtime', [])
-        if downtime_data:
-            try:
-                ws_downtime_history = sh.worksheet("Downtime_History")
-                for record in downtime_data:
-                    # Ensure record is a dictionary, not a string
-                    if isinstance(record, str):
-                        try:
-                            record = json.loads(record)
-                        except:
-                            continue
+            if downtime_data:
+                st.subheader("Local Downtime Entries (Pending Sync)")
+                try:
+                    data_for_df = []
+                    for record in downtime_data:
+                        if isinstance(record, dict):
+                            data_for_df.append(record)
+                        else:
+                            try:
+                                # Attempt to parse JSON string
+                                data_for_df.append(json.loads(record))
+                            except:
+                                continue  # skip invalid entries
                     
-                    if isinstance(record, dict):
-                        headers = ["User", "EntryID", "Timestamp"] + DOWNTIME_DEFAULT_FIELDS + ["Comments"]
-                        row = [record.get(h, "") for h in headers]
-                        ws_downtime_history.append_row(row, value_input_option="USER_ENTERED")
-                        sync_count += 1
-                        time.sleep(1)  # Delay between writes
-            except Exception as e:
-                st.error(f"Error syncing downtime data: {str(e)}")
+                    if data_for_df:
+                        local_df = pd.DataFrame(data_for_df)
+                        display_cols = ["User", "Timestamp", "Machine", "Shift", "Breakdown_Reason", "Duration_Mins"]
+                        available_cols = [col for col in display_cols if col in local_df.columns]
+                        if available_cols:
+                            st.dataframe(local_df[available_cols].head(10))
+                        else:
+                            st.info("No displayable downtime data available")
+                    else:
+                        st.info("No valid downtime data available")
+                except Exception as e:
+                    st.error(f"Error displaying downtime data: {str(e)}")
+
         
         if sync_count > 0:
             # Clear synced data from local storage
@@ -956,6 +964,9 @@ def downtime_ui():
     if st.button("Submit Downtime Data", key="submit_downtime_btn"):
         try:
             entry_id = uuid.uuid4().hex
+            # Ensure Duration_Mins is standard int
+            values["Duration_Mins"] = int(values.get("Duration_Mins", 0))
+            
             record = {
                 "User": st.session_state.current_user,
                 "EntryID": entry_id,
@@ -964,16 +975,17 @@ def downtime_ui():
                 "Comments": comments
             }
             
-            save_to_local('downtime', record)
+            save_to_local('downtime', record)  # now fully JSON serializable
             st.success(f"Downtime data saved locally! Entry ID: {entry_id}")
             
-            # Try to sync in background
+            # Manual sync button
             if st.button("🔄 Sync Downtime Data Now"):
                 sync_with_google_sheets()
                 st.rerun()
                 
         except Exception as e:
             st.error(f"Error saving downtime data: {str(e)}")
+
     
     # Display local downtime entries
     downtime_data = st.session_state.get('die_casting_downtime', [])
@@ -1039,6 +1051,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
