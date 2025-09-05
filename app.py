@@ -20,6 +20,7 @@ USER_CREDENTIALS = {
     "user2": "123",
     "user3": "1234"
 }
+
 QUALITY_SHARED_PASSWORD = "12"
 DOWNTIME_SHARED_PASSWORD = "123"
 
@@ -29,25 +30,12 @@ def get_gs_client():
         if 'gcp_service_account' not in st.secrets:
             st.error("Google Service Account credentials not found in secrets.")
             return None
-
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive",
         ]
-
-        creds_dict = {
-            "type": st.secrets["gcp_service_account"]["type"],
-            "project_id": st.secrets["gcp_service_account"]["project_id"],
-            "private_key_id": st.secrets["gcp_service_account"]["private_key_id"],
-            "private_key": st.secrets["gcp_service_account"]["private_key"].replace('\\n', '\n'),
-            "client_email": st.secrets["gcp_service_account"]["client_email"],
-            "client_id": st.secrets["gcp_service_account"]["client_id"],
-            "auth_uri": st.secrets["gcp_service_account"]["auth_uri"],
-            "token_uri": st.secrets["gcp_service_account"]["token_uri"],
-            "auth_provider_x509_cert_url": st.secrets["gcp_service_account"]["auth_provider_x509_cert_url"],
-            "client_x509_cert_url": st.secrets["gcp_service_account"]["client_x509_cert_url"]
-        }
-
+        creds_dict = st.secrets["gcp_service_account"]
+        creds_dict["private_key"] = creds_dict["private_key"].replace('\\n', '\n')
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         return gspread.authorize(creds)
     except Exception as e:
@@ -62,8 +50,7 @@ def get_gsheet_data(sheet_name):
         except gspread.SpreadsheetNotFound:
             st.error(f"Spreadsheet '{sheet_name}' not found. Make sure the service account has access.")
             return None
-    else:
-        return None
+    return None
 
 def read_sheet(sheet, worksheet_name):
     try:
@@ -92,24 +79,18 @@ def sync_local_data_to_sheet(local_key, history_sheet_name):
     if df_local.empty:
         st.info("No local data to sync.")
         return
-
     try:
         # Check if sheet exists, else create
         try:
             worksheet = sheet.worksheet(history_sheet_name)
         except gspread.WorksheetNotFound:
             worksheet = sheet.add_worksheet(title=history_sheet_name, rows="100", cols="50")
-
         existing_df = pd.DataFrame(worksheet.get_all_records())
         combined_df = pd.concat([existing_df, df_local], ignore_index=True)
-
-        # Remove NaN and ensure JSON compliance
         combined_df = combined_df.fillna("")
-
         worksheet.clear()
         worksheet.update([combined_df.columns.values.tolist()] + combined_df.values.tolist())
         st.success(f"✅ {history_sheet_name} synced successfully!")
-        # Clear local storage
         st.session_state[local_key] = []
     except Exception as e:
         st.error(f"Error syncing data: {e}")
@@ -128,10 +109,8 @@ def data_entry(section, config_df, logged_user, local_key, history_sheet_name, i
     if config_df.empty:
         st.error(f"⚠️ {section} config not loaded!")
         return
-
     st.subheader(f"Please Enter the {section} Data")
     now = datetime.now(SRI_LANKA_TZ).strftime(TIME_FORMAT)
-
     entry = {"User": logged_user, "DateTime": now}
 
     # Product selection
@@ -151,9 +130,8 @@ def data_entry(section, config_df, logged_user, local_key, history_sheet_name, i
     else:
         subtopic_columns = config_df["Subtopic"].tolist()
 
-    for col_name in subtopic_columns:
-        # Create a **stable key** per widget
-        widget_key = f"{section}_{col_name}"
+    for idx, col_name in enumerate(subtopic_columns):
+        widget_key = f"{section}_{col_name}_{idx}"  # Unique key per column
         if section.lower() != "downtime" and str(config_df.loc[config_df['Subtopic'] == col_name, "Dropdown or Not"].values[0]).strip().lower() == "yes":
             options = str(config_df.loc[config_df['Subtopic'] == col_name, "Dropdown Options"].values[0]).split(",")
             entry[col_name] = st.selectbox(col_name, [opt.strip() for opt in options], key=widget_key)
@@ -182,15 +160,14 @@ def data_entry(section, config_df, logged_user, local_key, history_sheet_name, i
             st.info("You have been logged out.")
             st.experimental_rerun()
 
-
 # ------------------ SYNC ALL LOCAL DATA ------------------
 def sync_all_local_data():
+    synced_sections = []
     sections = [
         ("prod_local_data", "Production_History"),
         ("qual_local_data", "Quality_History"),
         ("downtime_local_data", "Downtime_History")
     ]
-    synced_sections = []
     for local_key, sheet_name in sections:
         if local_key in st.session_state and st.session_state[local_key]:
             sync_local_data_to_sheet(local_key, sheet_name)
@@ -213,7 +190,7 @@ if choice == "Home":
     st.markdown("<h4 style='text-align: center;'>Please select a section to continue</h4>", unsafe_allow_html=True)
     st.markdown("---")
     st.header("⚡ Sync Any Unsynced Local Data")
-    if st.button("💾 Sync All Local Data"):
+    if st.button("💾 Sync All Local Data", key="sync_all_home"):
         sync_all_local_data()
 
 # ------------------ PRODUCTION TEAM LOGIN ------------------
@@ -224,9 +201,9 @@ elif choice == "Production Team Login":
 
     if not st.session_state.prod_logged_in:
         usernames = list(USER_CREDENTIALS.keys())
-        selected_user = st.selectbox("Select Username", usernames, key="prod_user")
-        entered_password = st.text_input("Enter Password", type="password", key="prod_pass")
-        if st.button("Login", key="prod_login_btn"):
+        selected_user = st.selectbox("Select Username", usernames, key="prod_user_select")
+        entered_password = st.text_input("Enter Password", type="password", key="prod_password_input")
+        if st.button("Login", key="prod_login_button"):
             actual_password = USER_CREDENTIALS.get(selected_user)
             if actual_password and entered_password == actual_password:
                 st.session_state.prod_logged_in = True
@@ -236,7 +213,7 @@ elif choice == "Production Team Login":
                 st.error("❌ Incorrect password!")
     else:
         config_df = load_config(SHEET_NAME, PRODUCTION_CONFIG_SHEET)
-        if st.button("🔄 Refresh Production Config Data", key="prod_refresh"):
+        if st.button("🔄 Refresh Production Config Data", key="refresh_prod_config"):
             config_df = load_config(SHEET_NAME, PRODUCTION_CONFIG_SHEET, force_refresh=True)
         data_entry("Production", config_df, st.session_state.logged_user, "prod_local_data", "Production_History", include_product=True)
 
@@ -247,9 +224,9 @@ elif choice == "Quality Team Login":
         st.session_state.qual_logged_user = ""
 
     if not st.session_state.qual_logged_in:
-        entered_user = st.text_input("Enter Username", key="qual_user")
-        entered_password = st.text_input("Enter Password", type="password", key="qual_pass")
-        if st.button("Login", key="qual_login_btn"):
+        entered_user = st.text_input("Enter Username", key="qual_user_input")
+        entered_password = st.text_input("Enter Password", type="password", key="qual_password_input")
+        if st.button("Login", key="qual_login_button"):
             if entered_password == QUALITY_SHARED_PASSWORD and entered_user.strip():
                 st.session_state.qual_logged_in = True
                 st.session_state.qual_logged_user = entered_user.strip()
@@ -258,7 +235,7 @@ elif choice == "Quality Team Login":
                 st.error("❌ Incorrect password!")
     else:
         config_df = load_config(SHEET_NAME, QUALITY_CONFIG_SHEET)
-        if st.button("🔄 Refresh Quality Config Data", key="qual_refresh"):
+        if st.button("🔄 Refresh Quality Config Data", key="refresh_qual_config"):
             config_df = load_config(SHEET_NAME, QUALITY_CONFIG_SHEET, force_refresh=True)
         data_entry("Quality", config_df, st.session_state.qual_logged_user, "qual_local_data", "Quality_History", include_product=True)
 
@@ -269,9 +246,9 @@ elif choice == "Downtime Data Recordings":
         st.session_state.downtime_logged_user = ""
 
     if not st.session_state.downtime_logged_in:
-        entered_user = st.text_input("Enter Username", key="dt_user")
-        entered_password = st.text_input("Enter Password", type="password", key="dt_pass")
-        if st.button("Login", key="dt_login_btn"):
+        entered_user = st.text_input("Enter Username", key="dt_user_input")
+        entered_password = st.text_input("Enter Password", type="password", key="dt_password_input")
+        if st.button("Login", key="dt_login_button"):
             if entered_password == DOWNTIME_SHARED_PASSWORD and entered_user.strip():
                 st.session_state.downtime_logged_in = True
                 st.session_state.downtime_logged_user = entered_user.strip()
@@ -283,8 +260,7 @@ elif choice == "Downtime Data Recordings":
         prod_config_df = load_config(SHEET_NAME, PRODUCTION_CONFIG_SHEET)
         planned_item = None
         if not prod_config_df.empty:
-            planned_item = st.selectbox("Select Planned Item", prod_config_df['Product'].unique(), key="downtime_planned_item")
+            planned_item = st.selectbox("Select Planned Item", prod_config_df['Product'].unique(), key="dt_planned_item")
+        if st.button("🔄 Refresh Downtime Config Data", key="refresh_dt_config"):
+            downtime_config_df = load_config(SHEET_NAME, DOWNTIME_CONFIG_SHEET, force_refresh=True)
         data_entry("Downtime", downtime_config_df, st.session_state.downtime_logged_user, "downtime_local_data", "Downtime_History", include_product=False, planned_item=planned_item)
-
-
-
