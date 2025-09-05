@@ -608,7 +608,7 @@ def admin_ui():
 def production_ui():
     st.subheader(f"Production Data Entry - User: {st.session_state.current_user}")
     
-    # Refresh button at the top
+    # Refresh button
     col1, col2 = st.columns([3, 1])
     with col1:
         st.write("")  # Spacer
@@ -621,9 +621,10 @@ def production_ui():
                 st.warning("Using local data cache")
             st.rerun()
     
-    # --- Load Production Config dynamically from Google Sheets ---
+    # --- Load Production Config dynamically ---
     refresh_config_if_needed()
 
+    # Try to connect to Google Sheets (only to read config)
     if not initialize_google_sheets():
         st.error("Cannot connect to Google Sheets. Using offline mode.")
         return
@@ -639,7 +640,7 @@ def production_ui():
         st.error(f"Error reading Production_Config: {str(e)}")
         return
 
-    # Validate Production_Config columns
+    # Validate config columns
     required_cols = ["Item Name", "Subtopic", "Dropdown or Not", "Dropdown Options"]
     for col in required_cols:
         if col not in config_df.columns:
@@ -654,39 +655,39 @@ def production_ui():
         st.info("Please select an Item Name to proceed.")
         return
 
-    # Filter subtopics for the selected item
+    # Filter config for selected item
     filtered_config = config_df[config_df["Item Name"] == selected_item]
 
     # --- Step 2: Dynamically Generate Fields ---
     st.subheader(f"Enter Data for {selected_item}")
+    
+    current_sri_lanka_time = get_sri_lanka_time()
+    current_date = current_sri_lanka_time.split(" ")[0]  # YYYY-MM-DD only
+
     record = {
         "User": st.session_state.current_user,
         "EntryID": uuid.uuid4().hex,
-        "Timestamp": get_sri_lanka_time(),  # always capture current SL time
+        "Timestamp": current_sri_lanka_time,
         "Item Name": selected_item
     }
-
-    # Helper for Sri Lankan date
-    current_sri_lanka_time = get_sri_lanka_time()
-    current_date = current_sri_lanka_time.split(" ")[0]  # Extract YYYY-MM-DD from timestamp
 
     for _, row in filtered_config.iterrows():
         subtopic = str(row["Subtopic"]).strip()
         dropdown_flag = str(row["Dropdown or Not"]).strip().lower() == "yes"
 
-        # --- Special Case: Timestamp ---
+        # --- Auto Timestamp ---
         if subtopic.lower() == "timestamp":
             st.text_input(subtopic, value=current_sri_lanka_time, disabled=True, key=f"subtopic_{subtopic}")
             record[subtopic] = current_sri_lanka_time
             continue
 
-        # --- Special Case: Date ---
+        # --- Auto Date ---
         if subtopic.lower() == "date":
             st.text_input(subtopic, value=current_date, disabled=True, key=f"subtopic_{subtopic}")
             record[subtopic] = current_date
             continue
 
-        # --- Normal handling for other subtopics ---
+        # --- Dropdown or Free Text ---
         if dropdown_flag:
             options = [opt.strip() for opt in str(row["Dropdown Options"]).split(",") if opt.strip()]
             if options:
@@ -696,50 +697,23 @@ def production_ui():
         else:
             record[subtopic] = st.text_input(subtopic, key=f"subtopic_{subtopic}")
 
-    # Comments field
+    # Comments
     record["Comments"] = st.text_area("Comments", key="comments")
 
-    # --- Step 3: Submit and Update History Dynamically ---
-    if st.button("Submit", key="submit_btn"):
-        # Validate empty fields except "Comments"
+    # --- Step 3: Save Locally (No Immediate Sync) ---
+    if st.button("Save Locally", key="save_local_btn"):
+        # Validate required fields except comments
         if any(value == "" for key, value in record.items() if key not in ["Comments"]):
-            st.error("Please fill all required fields before submitting.")
+            st.error("Please fill all required fields before saving.")
         else:
-            try:
-                # Load existing history sheet
-                try:
-                    ws_history = sh.worksheet("History")
-                    history_values = ws_history.get_all_records()
-                    history_df = pd.DataFrame(history_values)
-                except gspread.WorksheetNotFound:
-                    st.warning("History sheet not found. Creating a new one.")
-                    history_df = pd.DataFrame()
+            save_to_local('production', record)
+            st.success(f"Record saved locally! EntryID: {record['EntryID']}")
 
-                # Add missing columns dynamically
-                for key in record.keys():
-                    if key not in history_df.columns:
-                        history_df[key] = ""
-
-                # Append the new row
-                history_df = pd.concat([history_df, pd.DataFrame([record])], ignore_index=True)
-
-                # Update Google Sheet
-                ws_history.update([history_df.columns.values.tolist()] + history_df.values.tolist())
-
-                # Save to local storage too
-                save_to_local('production', record)
-
-                st.success(f"Saved successfully! EntryID: {record['EntryID']}")
-
-            except Exception as e:
-                st.error(f"Error saving to History sheet: {str(e)}")
-
-    # --- Step 4: Show Local Pending Entries ---
+    # --- Step 4: Show Local Unsynced Data ---
     production_data = st.session_state.get('die_casting_production', [])
     if production_data:
         st.subheader("Local Entries (Pending Sync)")
         try:
-            # Convert to list of dictionaries
             data_for_df = [r for r in production_data if isinstance(r, dict)]
             if data_for_df:
                 local_df = pd.DataFrame(data_for_df)
@@ -747,13 +721,38 @@ def production_ui():
             else:
                 st.info("No valid production data available")
         except Exception as e:
-            st.error(f"Error displaying data: {str(e)}")
+            st.error(f"Error displaying local data: {str(e)}")
 
-    # --- Sync Button ---
+    # --- Step 5: Sync Button to Push Data to Google Sheets ---
     if st.button("🔄 Sync with Google Sheets Now"):
-        sync_with_google_sheets()
-        st.rerun()
+        try:
+            ws_history = sh.worksheet("History")
+            history_values = ws_history.get_all_records()
+            history_df = pd.DataFrame(history_values)
+        except gspread.WorksheetNotFound:
+            st.warning("History sheet not found. Creating a new one.")
+            history_df = pd.DataFrame()
 
+        try:
+            # Loop through local records and append to Google Sheet
+            for local_record in production_data:
+                # Add missing columns dynamically
+                for key in local_record.keys():
+                    if key not in history_df.columns:
+                        history_df[key] = ""
+
+                # Append record
+                history_df = pd.concat([history_df, pd.DataFrame([local_record])], ignore_index=True)
+
+            # Update Google Sheet
+            ws_history.update([history_df.columns.values.tolist()] + history_df.values.tolist())
+
+            # Clear local after successful sync
+            st.session_state['die_casting_production'] = []
+            st.success("All local records successfully synced with Google Sheets!")
+
+        except Exception as e:
+            st.error(f"Error during sync: {str(e)}")
 
 
 # ------------------ Quality UI ------------------
@@ -1006,5 +1005,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
