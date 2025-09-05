@@ -5,6 +5,8 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime
 import pytz
 
+
+
 # ------------------ SETTINGS ------------------
 APP_TITLE = "Die Casting Production"
 SHEET_NAME = "FlowApp_Data"  # Replace with your Google Sheet name
@@ -23,6 +25,13 @@ USER_CREDENTIALS = {
 
 QUALITY_SHARED_PASSWORD = "12"
 DOWNTIME_SHARED_PASSWORD = "123"
+
+if "prod_config_df" not in st.session_state:
+    sheet = get_gsheet_data(SHEET_NAME)
+    if sheet:
+        st.session_state.prod_config_df = read_sheet(sheet, PRODUCTION_CONFIG_SHEET)
+    else:
+        st.session_state.prod_config_df = pd.DataFrame()
 
 # ------------------ GOOGLE SHEET CONNECTION ------------------
 def get_gs_client():
@@ -137,12 +146,13 @@ def data_entry(section, config_df, logged_user, local_key, history_sheet_name, i
         products = config_df['Product'].unique().tolist()
         selected_product = st.selectbox("Select Product", products)
     else:
-        planned_items = st.session_state.get("prod_config_df", pd.DataFrame())
-        if not planned_items.empty:
-            selected_product = st.selectbox("Select Planned Item", planned_items['Product'].unique())
+        prod_config_df = st.session_state.get("prod_config_df", pd.DataFrame())
+        if not prod_config_df.empty:
+            selected_product = st.selectbox("Select Planned Item", prod_config_df['Product'].unique())
         else:
             st.error("⚠️ Production_Config not loaded! Cannot select Planned Item.")
             return
+
 
     now = datetime.now(SRI_LANKA_TZ).strftime(TIME_FORMAT)
     st.write(f"📅 Date & Time: {now}")
@@ -298,4 +308,5 @@ elif choice == "Downtime Data Recordings":
         if st.button("🔄 Refresh Downtime Config Data"):
             downtime_config_df = load_config(SHEET_NAME, DOWNTIME_CONFIG_SHEET, force_refresh=True)
         data_entry("Downtime", downtime_config_df, st.session_state.downtime_logged_user, "downtime_local_data", "Downtime_History", include_product=False)
+
 
