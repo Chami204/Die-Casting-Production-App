@@ -109,9 +109,9 @@ def production_data_entry(logged_user):
     for idx, row in subtopics_df.iterrows():
         if str(row["Dropdown or Not"]).strip().lower() == "yes":
             options = [opt.strip() for opt in str(row["Dropdown Options"]).split(",")]
-            production_entry[row["Subtopic"]] = st.selectbox(row["Subtopic"], options, key=row["Subtopic"])
+            production_entry[row["Subtopic"]] = st.selectbox(row["Subtopic"], options, key=f"{logged_user}_{row['Subtopic']}")
         else:
-            production_entry[row["Subtopic"]] = st.text_input(row["Subtopic"], key=row["Subtopic"])
+            production_entry[row["Subtopic"]] = st.text_input(row["Subtopic"], key=f"{logged_user}_{row['Subtopic']}")
 
     if st.button("Save Locally"):
         save_locally(production_entry)
@@ -188,23 +188,27 @@ elif choice == "Production Team Login":
         actual_password = USER_CREDENTIALS.get(selected_user)
         if actual_password and entered_password == actual_password:
             st.success(f"Welcome, {selected_user}!")
-
-            # Load production config data
-            load_production_config()
-
-            # Manual Refresh Button
-            if st.button("🔄 Refresh Production Config Data"):
-                load_production_config(force_refresh=True)
-
-            # Show Production Data Entry section AFTER successful login
-            production_data_entry(logged_user=selected_user)
-
-            # Sync locally saved data to Google Sheet
-            if st.button("📤 Sync Local Data to Google Sheet"):
-                sync_to_google_sheet()
-
+            st.session_state.logged_in = True
+            st.session_state.logged_user = selected_user
         else:
             st.error("❌ Incorrect password!")
+
+    # Check login state to show data entry
+    if st.session_state.get("logged_in", False):
+        # Load production config if not loaded
+        if "production_config_df" not in st.session_state:
+            load_production_config()
+        
+        # Manual Refresh Button
+        if st.button("🔄 Refresh Production Config Data"):
+            load_production_config(force_refresh=True)
+        
+        # Show Production Data Entry section
+        production_data_entry(logged_user=st.session_state.logged_user)
+
+        # Sync button
+        if st.button("📤 Sync Local Data to Google Sheet"):
+            sync_to_google_sheet()
 
 # ------------------ QUALITY TEAM LOGIN ------------------
 elif choice == "Quality Team Login":
