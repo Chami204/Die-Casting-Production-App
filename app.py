@@ -859,25 +859,31 @@ def quality_ui():
     if quality_data:
         st.subheader("Local Quality Entries (Pending Sync)")
         try:
-            # Convert to list of dictionaries first
+            # Convert all entries to dict
             data_for_df = []
             for record in quality_data:
+                if isinstance(record, str):
+                    try:
+                        record = json.loads(record)
+                    except:
+                        continue
                 if isinstance(record, dict):
                     data_for_df.append(record)
-            
+    
             if data_for_df:
                 local_df = pd.DataFrame(data_for_df)
                 display_cols = ["User", "Timestamp", "Product", "Total_Lot_Qty", "Sample_Size", 
-                               "AQL_Level", "Accept_Reject", "Results"]
-                available_cols = [col for col in display_cols if col in local_df.columns]
-                if available_cols:
-                    st.dataframe(local_df[available_cols].head(10))
-                else:
-                    st.info("No displayable quality data available")
+                                "AQL_Level", "Accept_Reject", "Results"]
+                # Ensure all columns exist
+                for col in display_cols:
+                    if col not in local_df.columns:
+                        local_df[col] = ""
+                st.dataframe(local_df[display_cols].head(10))
             else:
                 st.info("No valid quality data available")
         except Exception as e:
             st.error(f"Error displaying quality data: {str(e)}")
+
 
 # ------------------ Downtime UI ------------------
 def downtime_ui():
@@ -963,24 +969,29 @@ def downtime_ui():
     if downtime_data:
         st.subheader("Local Downtime Entries (Pending Sync)")
         try:
-            # Convert to list of dictionaries first
             data_for_df = []
             for record in downtime_data:
+                if isinstance(record, str):
+                    try:
+                        record = json.loads(record)
+                    except:
+                        continue
                 if isinstance(record, dict):
                     data_for_df.append(record)
-            
+    
             if data_for_df:
                 local_df = pd.DataFrame(data_for_df)
                 display_cols = ["User", "Timestamp", "Machine", "Shift", "Breakdown_Reason", "Duration_Mins"]
-                available_cols = [col for col in display_cols if col in local_df.columns]
-                if available_cols:
-                    st.dataframe(local_df[available_cols].head(10))
-                else:
-                    st.info("No displayable downtime data available")
+                # Ensure all columns exist
+                for col in display_cols:
+                    if col not in local_df.columns:
+                        local_df[col] = ""
+                st.dataframe(local_df[display_cols].head(10))
             else:
                 st.info("No valid downtime data available")
         except Exception as e:
             st.error(f"Error displaying downtime data: {str(e)}")
+
             
 # ------------------ Main ------------------
 def main():
@@ -1022,3 +1033,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+1. Error displaying data: Expecting value: line 1 column 2 (char 1)-in production data entry after submitting
+2. No valid downtime data available - in downtime data entry after submitting
+3. No valid quality data available - in quality data entry after submitting
+Only fix these errors and give the full code without changing anything else
