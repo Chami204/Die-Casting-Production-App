@@ -9,7 +9,7 @@ import os
 import json
 
 # ---------------------------- SETTINGS ----------------------------
-SHEET_NAME = "Your_Google_Sheet_Name"
+SHEET_NAME = "FlowApp_Data"
 PRODUCTION_CONFIG_SHEET = "Production_Config"
 USER_CREDENTIALS_SHEET = "User_Credentials"
 LOCAL_SAVE_FILE = "local_production_data.json"
@@ -134,3 +134,4 @@ if choice == "Production Team Login":
             st.success("✅ All data sent to Google Sheet successfully!")
     else:
         st.info("No local data to send.")
+
