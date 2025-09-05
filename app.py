@@ -8,19 +8,19 @@ APP_TITLE = "Die Casting Production"
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 SRI_LANKA_TZ = pytz.timezone('Asia/Colombo')
 
-# Default user credentials (hardcoded)
+# ------------------ Hardcoded User Credentials ------------------
 USER_CREDENTIALS = {
     "chami": "123",
     "user1": "user123",
     "user2": "user456"
 }
 
-# Example Excel file path
+# Example Excel file path (replace with actual path or Google Sheet connector)
 EXCEL_FILE = "FlowApp_Data.xlsx"
 
 # ------------------ Utility Functions ------------------
 def load_production_data():
-    """Load production data from the Excel sheet."""
+    """Load production data from Excel."""
     try:
         df = pd.read_excel(EXCEL_FILE)
         return df
@@ -31,13 +31,13 @@ def load_production_data():
         return df
 
 def save_production_data(df):
-    """Save production data to the Excel sheet."""
+    """Save production data to Excel."""
     df.to_excel(EXCEL_FILE, index=False)
 
-# ------------------ Login ------------------
+# ------------------ Login Section ------------------
 def login():
     st.title(APP_TITLE)
-    st.subheader("Login")
+    st.subheader("Login to Continue")
 
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
@@ -47,32 +47,45 @@ def login():
             st.session_state["logged_in"] = True
             st.session_state["username"] = username
             st.success(f"Welcome {username}!")
+            st.experimental_rerun()
         else:
             st.error("Invalid username or password")
 
-# ------------------ Production Data Entry ------------------
+# ------------------ Admin Section ------------------
+def admin_section():
+    st.subheader("Admin Dashboard")
+    st.info("Admin can view or directly edit production data here.")
+
+    # Load data
+    df = load_production_data()
+
+    # Display editable data table
+    edited_df = st.data_editor(df, num_rows="dynamic")
+
+    # Save button
+    if st.button("Save Changes"):
+        save_production_data(edited_df)
+        st.success("Changes saved successfully!")
+
+# ------------------ Production Data Entry Section ------------------
 def production_data_entry():
     st.subheader("Production Data Entry")
 
-    # Initialize session state to keep section open
-    if "keep_open" not in st.session_state:
-        st.session_state.keep_open = True
+    # Initialize session state for data cache
+    if "production_df" not in st.session_state:
+        st.session_state.production_df = load_production_data()
 
-    # Manual refresh button
+    # Manual Refresh Button
     if st.button("🔄 Refresh Data from Excel"):
         st.session_state.production_df = load_production_data()
         st.success("Data refreshed successfully!")
 
-    # Load production data into session state if not already loaded
-    if "production_df" not in st.session_state:
-        st.session_state.production_df = load_production_data()
-
-    # Data entry form
+    # Data Entry Form
     with st.form("production_form", clear_on_submit=True):
         date = st.date_input("Date", datetime.now().date())
         machine = st.text_input("Machine")
         product = st.text_input("Product")
-        quantity = st.number_input("Quantity", min_value=0)
+        quantity = st.number_input("Quantity", min_value=0, step=1)
 
         submitted = st.form_submit_button("Add Record")
 
@@ -83,27 +96,40 @@ def production_data_entry():
                 "Product": product,
                 "Quantity": quantity
             }])
-
-            st.session_state.production_df = pd.concat([st.session_state.production_df, new_data], ignore_index=True)
+            st.session_state.production_df = pd.concat(
+                [st.session_state.production_df, new_data],
+                ignore_index=True
+            )
             save_production_data(st.session_state.production_df)
             st.success("Record added successfully!")
 
-    # Display current data
+    st.markdown("### Current Production Data")
     st.dataframe(st.session_state.production_df)
+
+# ------------------ Logout ------------------
+def logout():
+    st.session_state.clear()
+    st.experimental_rerun()
 
 # ------------------ Main App ------------------
 def main():
     if "logged_in" not in st.session_state or not st.session_state["logged_in"]:
         login()
     else:
-        st.sidebar.title("Navigation")
-        page = st.sidebar.radio("Go to", ["Production Data Entry", "Logout"])
+        st.sidebar.title(f"Welcome, {st.session_state['username']}")
+        menu = ["Production Data Entry", "Admin Dashboard", "Logout"]
 
-        if page == "Production Data Entry":
+        choice = st.sidebar.radio("Navigation", menu)
+
+        if choice == "Production Data Entry":
             production_data_entry()
-        elif page == "Logout":
-            st.session_state.clear()
-            st.experimental_rerun()
+        elif choice == "Admin Dashboard":
+            if st.session_state["username"] == "admin":
+                admin_section()
+            else:
+                st.error("Access denied. Admins only.")
+        elif choice == "Logout":
+            logout()
 
 # ------------------ Run App ------------------
 if __name__ == "__main__":
