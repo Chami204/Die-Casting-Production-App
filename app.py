@@ -9,9 +9,8 @@ import os
 import json
 
 # ---------------------------- SETTINGS ----------------------------
-SHEET_NAME = "FlowApp_Data"
+SHEET_NAME = "Your_Google_Sheet_Name"  # Replace with your Google Sheet name
 PRODUCTION_CONFIG_SHEET = "Production_Config"
-USER_CREDENTIALS_SHEET = "User_Credentials"
 LOCAL_SAVE_FILE = "local_production_data.json"
 
 SRI_LANKA_TZ = pytz.timezone("Asia/Colombo")
@@ -94,6 +93,13 @@ def clear_local_data():
     if os.path.exists(LOCAL_SAVE_FILE):
         os.remove(LOCAL_SAVE_FILE)
 
+# ------------------ USER CREDENTIALS (HARDCODED) ------------------
+USER_CREDENTIALS = {
+    "chami": "123",
+    "user2": "password",
+    "user3": "abc123"
+}
+
 # ------------------------ STREAMLIT APP ---------------------------
 st.set_page_config(page_title="Production App", page_icon="🛠️", layout="centered")
 st.title("🏭 Production App")
@@ -101,52 +107,51 @@ st.title("🏭 Production App")
 menu = ["Production Team Login", "Quality Team Login", "Downtime Data Recordings"]
 choice = st.radio("Select an option", menu, index=0)
 
-# Load Google Sheets
+# Load Production Config from Google Sheet
 sheet = get_gsheet_data(SHEET_NAME)
 production_config_df = read_sheet(sheet, PRODUCTION_CONFIG_SHEET)
-user_credentials_df = read_sheet(sheet, USER_CREDENTIALS_SHEET)
 
 # -------------------- PRODUCTION TEAM LOGIN -----------------------
 if choice == "Production Team Login":
     st.header("🔑 Production Team Login")
-    
-    usernames = user_credentials_df['username'].tolist()
+
+    usernames = list(USER_CREDENTIALS.keys())
     selected_user = st.selectbox("Select Username", usernames)
     entered_password = st.text_input("Enter Password", type="password")
-    
+
     if st.button("Login"):
-        actual_password = user_credentials_df.loc[user_credentials_df['username'] == selected_user, 'password'].values[0]
-        if entered_password == actual_password:
+        actual_password = USER_CREDENTIALS.get(selected_user)
+        if actual_password and entered_password == actual_password:
             st.success(f"Welcome, {selected_user}!")
-            
+
+            # ------------------ PRODUCTION DATA ENTRY ------------------
             st.subheader("Pls Enter the Production Data")
-            
+
             # Product dropdown
             products = production_config_df['Product'].unique().tolist()
             selected_product = st.selectbox("Select Product", products)
-            
+
             # Show current date/time
             now = datetime.now(SRI_LANKA_TZ).strftime(TIME_FORMAT)
             st.write(f"📅 Date & Time: {now}")
-            
+
             # Filter subtopics for selected product
             subtopics_df = production_config_df[production_config_df['Product'] == selected_product]
-            
+
             production_entry = {}
             production_entry["Product"] = selected_product
             production_entry["DateTime"] = now
-            
+
             for idx, row in subtopics_df.iterrows():
                 if row["Dropdown or Not"].strip().lower() == "yes":
                     options = [opt.strip() for opt in row["Dropdown Options"].split(",")]
                     production_entry[row["Subtopic"]] = st.selectbox(row["Subtopic"], options, key=row["Subtopic"])
                 else:
                     production_entry[row["Subtopic"]] = st.text_input(row["Subtopic"], key=row["Subtopic"])
-            
+
             if st.button("Save Locally"):
                 save_locally(production_entry)
                 st.success("✅ Data saved locally!")
-        
         else:
             st.error("❌ Incorrect password!")
 
@@ -155,7 +160,7 @@ if choice == "Production Team Login":
     st.markdown("---")
     st.subheader("Send Local Data to Google Sheet")
     local_data = load_local_data()
-    
+
     if local_data:
         st.write(f"{len(local_data)} local records ready to send.")
         if st.button("Pls send the data to the Google Sheet"):
@@ -165,4 +170,3 @@ if choice == "Production Team Login":
             st.success("✅ All data sent to Google Sheet successfully!")
     else:
         st.info("No local data to send.")
-
