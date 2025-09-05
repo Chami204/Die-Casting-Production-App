@@ -177,24 +177,42 @@ if choice == "Home":
     st.markdown("<h4 style='text-align: center;'>Please select a section to continue</h4>", unsafe_allow_html=True)
 
 # ------------------ PRODUCTION TEAM LOGIN ------------------
+# ------------------ PRODUCTION TEAM LOGIN ------------------
 elif choice == "Production Team Login":
     st.header("🔑 Production Team Login")
 
-    usernames = list(USER_CREDENTIALS.keys())
-    selected_user = st.selectbox("Select Username", usernames)
-    entered_password = st.text_input("Enter Password", type="password")
+    # Initialize session state variables
+    if "logged_in" not in st.session_state:
+        st.session_state.logged_in = False
+    if "logged_user" not in st.session_state:
+        st.session_state.logged_user = ""
+    if "local_storage" not in st.session_state:
+        st.session_state.local_storage = []
 
+    # Two columns for login & logout
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        usernames = list(USER_CREDENTIALS.keys())
+        selected_user = st.selectbox("Select Username", usernames)
+        entered_password = st.text_input("Enter Password", type="password")
+    with col2:
+        if st.button("Logout"):
+            st.session_state.logged_in = False
+            st.session_state.logged_user = ""
+            st.success("✅ Logged out successfully!")
+
+    # Login button
     if st.button("Login"):
         actual_password = USER_CREDENTIALS.get(selected_user)
         if actual_password and entered_password == actual_password:
-            st.success(f"Welcome, {selected_user}!")
             st.session_state.logged_in = True
             st.session_state.logged_user = selected_user
+            st.success(f"Welcome, {selected_user}!")
         else:
             st.error("❌ Incorrect password!")
 
-    # Check login state to show data entry
-    if st.session_state.get("logged_in", False):
+    # Show Production Data Entry if logged in
+    if st.session_state.logged_in:
         # Load production config if not loaded
         if "production_config_df" not in st.session_state:
             load_production_config()
@@ -210,6 +228,7 @@ elif choice == "Production Team Login":
         if st.button("📤 Sync Local Data to Google Sheet"):
             sync_to_google_sheet()
 
+
 # ------------------ QUALITY TEAM LOGIN ------------------
 elif choice == "Quality Team Login":
     st.header("Quality Team Login (Coming Soon...)")
@@ -217,3 +236,4 @@ elif choice == "Quality Team Login":
 # ------------------ DOWNTIME DATA RECORDINGS ------------------
 elif choice == "Downtime Data Recordings":
     st.header("Downtime Data Recordings (Coming Soon...)")
+
