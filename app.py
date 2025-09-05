@@ -7,7 +7,7 @@ import pytz
 
 # ------------------ SETTINGS ------------------
 APP_TITLE = "Die Casting Production"
-SHEET_NAME = "Your_Google_Sheet_Name"  # Replace with your Google Sheet name
+SHEET_NAME = "FlowApp_Data"  # Replace with your Google Sheet name
 PRODUCTION_CONFIG_SHEET = "Production_Config"
 QUALITY_CONFIG_SHEET = "Quality_Config"
 DOWNTIME_CONFIG_SHEET = "Downtime_Config"
@@ -271,3 +271,4 @@ elif choice == "Downtime Data Recordings":
             # Add Planned Item column
             downtime_config_df["Product"] = st.selectbox("Select Planned Item", prod_config_df["Product"].unique())
         data_entry("Downtime", downtime_config_df, st.session_state.downtime_logged_user, "downtime_local_data", "Downtime_History", include_product=False)
+
