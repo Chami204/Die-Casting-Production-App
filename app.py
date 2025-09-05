@@ -7,7 +7,7 @@ import pytz
 
 # ------------------ SETTINGS ------------------
 APP_TITLE = "Die Casting Production"
-SHEET_NAME = "Your_Google_Sheet_Name"  # Replace with your Google Sheet name
+SHEET_NAME = "FlowApp_Data"  # Replace with your Google Sheet name
 PRODUCTION_CONFIG_SHEET = "Production_Config"
 QUALITY_CONFIG_SHEET = "Quality_Config"
 DOWNTIME_CONFIG_SHEET = "Downtime_Config"
@@ -16,12 +16,12 @@ SRI_LANKA_TZ = pytz.timezone('Asia/Colombo')
 
 # ------------------ USER CREDENTIALS ------------------
 USER_CREDENTIALS = {
-    "user1": "pass123",
-    "user2": "password",
-    "user3": "abc123"
+    "user1": "12",
+    "user2": "123",
+    "user3": "1234"
 }
-QUALITY_SHARED_PASSWORD = "qualitypass"
-DOWNTIME_SHARED_PASSWORD = "downtimepass"
+QUALITY_SHARED_PASSWORD = "123"
+DOWNTIME_SHARED_PASSWORD = "1234"
 
 # ------------------ GOOGLE SHEET CONNECTION ------------------
 def get_gs_client():
@@ -391,3 +391,4 @@ elif choice == "Downtime Data Recordings":
         downtime_data_entry(st.session_state.downtime_logged_user)
         if st.button("📤 Sync Downtime Data to Google Sheet"):
             sync_downtime_to_google_sheet()
+
