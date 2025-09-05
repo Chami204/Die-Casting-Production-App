@@ -1,33 +1,37 @@
-# app.py
 import streamlit as st
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 import pytz
-import os
 import json
 
-# ---------------------------- SETTINGS ----------------------------
-SHEET_NAME = "FlowApp_Data"  # Replace with your Google Sheet name
+# ------------------ SETTINGS ------------------
+APP_TITLE = "Die Casting Production"
+SHEET_NAME = "Your_Google_Sheet_Name"  # Replace with actual Google Sheet name
 PRODUCTION_CONFIG_SHEET = "Production_Config"
-LOCAL_SAVE_FILE = "local_production_data.json"
-
-SRI_LANKA_TZ = pytz.timezone("Asia/Colombo")
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+SRI_LANKA_TZ = pytz.timezone('Asia/Colombo')
 
-# ------------------ GOOGLE SHEETS AUTHENTICATION ------------------
+# ------------------ USER CREDENTIALS ------------------
+USER_CREDENTIALS = {
+    "user1": "pass123",
+    "user2": "password",
+    "user3": "abc123"
+}
+
+# ------------------ GOOGLE SHEET CONNECTION ------------------
 def get_gs_client():
     try:
         if 'gcp_service_account' not in st.secrets:
             st.error("Google Service Account credentials not found in secrets.")
             return None
-
+            
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive",
         ]
-
+        
         creds_dict = {
             "type": st.secrets["gcp_service_account"]["type"],
             "project_id": st.secrets["gcp_service_account"]["project_id"],
@@ -40,7 +44,7 @@ def get_gs_client():
             "auth_provider_x509_cert_url": st.secrets["gcp_service_account"]["auth_provider_x509_cert_url"],
             "client_x509_cert_url": st.secrets["gcp_service_account"]["client_x509_cert_url"]
         }
-
+        
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         return gspread.authorize(creds)
     except Exception as e:
@@ -48,71 +52,84 @@ def get_gs_client():
         return None
 
 def get_gsheet_data(sheet_name):
-    gs_client = get_gs_client()
-    if gs_client is None:
-        st.stop()
-    try:
-        sheet = gs_client.open(sheet_name)
-        return sheet
-    except Exception as e:
-        st.error(f"Failed to open Google Sheet '{sheet_name}': {str(e)}")
-        st.stop()
+    client = get_gs_client()
+    if client:
+        return client.open(sheet_name)
+    else:
+        return None
 
 def read_sheet(sheet, worksheet_name):
-    worksheet = sheet.worksheet(worksheet_name)
-    data = worksheet.get_all_records()
-    return pd.DataFrame(data)
+    try:
+        worksheet = sheet.worksheet(worksheet_name)
+        data = worksheet.get_all_records()
+        return pd.DataFrame(data)
+    except Exception as e:
+        st.error(f"Error reading worksheet '{worksheet_name}': {str(e)}")
+        return pd.DataFrame()
 
-def append_to_sheet(sheet, worksheet_name, data_dict):
-    worksheet = sheet.worksheet(worksheet_name)
-    existing_columns = worksheet.row_values(1)
-    row = []
-    for col in existing_columns:
-        row.append(data_dict.get(col, ""))
-    worksheet.append_row(row)
-
-# ------------------------ LOCAL SAVE -----------------------------
+# ------------------ LOCAL SAVE ------------------
 def save_locally(data):
-    if os.path.exists(LOCAL_SAVE_FILE):
-        with open(LOCAL_SAVE_FILE, "r") as f:
-            existing = json.load(f)
-    else:
-        existing = []
-    existing.append(data)
-    with open(LOCAL_SAVE_FILE, "w") as f:
-        json.dump(existing, f)
+    try:
+        if "local_storage" not in st.session_state:
+            st.session_state.local_storage = []
+        st.session_state.local_storage.append(data)
+        st.success("Data saved locally!")
+    except Exception as e:
+        st.error(f"Failed to save data locally: {str(e)}")
 
-def load_local_data():
-    if os.path.exists(LOCAL_SAVE_FILE):
-        with open(LOCAL_SAVE_FILE, "r") as f:
-            return json.load(f)
-    else:
-        return []
+# ------------------ PRODUCTION DATA ENTRY FUNCTION ------------------
+def production_data_entry():
+    """Production Data Entry UI + Logic"""
 
-def clear_local_data():
-    if os.path.exists(LOCAL_SAVE_FILE):
-        os.remove(LOCAL_SAVE_FILE)
+    # Pull latest Production Config
+    sheet = get_gsheet_data(SHEET_NAME)
+    production_config_df = read_sheet(sheet, PRODUCTION_CONFIG_SHEET)
 
-# ------------------ USER CREDENTIALS (HARDCODED) ------------------
-USER_CREDENTIALS = {
-    "chami": "123",
-    "user2": "password",
-    "user3": "abc123"
-}
+    if production_config_df.empty:
+        st.error("⚠️ No data found in Production_Config sheet!")
+        return
 
-# ------------------------ STREAMLIT APP ---------------------------
-st.set_page_config(page_title="Production App", page_icon="🛠️", layout="centered")
-st.title("🏭 Production App")
+    st.subheader("Please Enter the Production Data")
 
-menu = ["Production Team Login", "Quality Team Login", "Downtime Data Recordings"]
-choice = st.radio("Select an option", menu, index=0)
+    # Product dropdown
+    products = production_config_df['Product'].unique().tolist()
+    selected_product = st.selectbox("Select Product", products)
 
-# Load Production Config from Google Sheet
-sheet = get_gsheet_data(SHEET_NAME)
-production_config_df = read_sheet(sheet, PRODUCTION_CONFIG_SHEET)
+    # Show current date/time
+    now = datetime.now(SRI_LANKA_TZ).strftime(TIME_FORMAT)
+    st.write(f"📅 Date & Time: {now}")
 
-# -------------------- PRODUCTION TEAM LOGIN -----------------------
-if choice == "Production Team Login":
+    # Filter subtopics for selected product
+    subtopics_df = production_config_df[production_config_df['Product'] == selected_product]
+
+    production_entry = {}
+    production_entry["Product"] = selected_product
+    production_entry["DateTime"] = now
+
+    for idx, row in subtopics_df.iterrows():
+        if str(row["Dropdown or Not"]).strip().lower() == "yes":
+            options = [opt.strip() for opt in str(row["Dropdown Options"]).split(",")]
+            production_entry[row["Subtopic"]] = st.selectbox(row["Subtopic"], options, key=row["Subtopic"])
+        else:
+            production_entry[row["Subtopic"]] = st.text_input(row["Subtopic"], key=row["Subtopic"])
+
+    if st.button("Save Locally"):
+        save_locally(production_entry)
+        st.success("✅ Data saved locally!")
+
+# ------------------ MAIN APP ------------------
+st.set_page_config(page_title=APP_TITLE, layout="centered")
+st.title(APP_TITLE)
+
+menu = ["Home", "Production Team Login", "Quality Team Login", "Downtime Data Recordings"]
+choice = st.sidebar.selectbox("Menu", menu)
+
+if choice == "Home":
+    st.markdown("<h2 style='text-align: center;'>Welcome to Die Casting Production App</h2>", unsafe_allow_html=True)
+    st.markdown("<h4 style='text-align: center;'>Please select a section to continue</h4>", unsafe_allow_html=True)
+
+# ------------------ PRODUCTION TEAM LOGIN ------------------
+elif choice == "Production Team Login":
     st.header("🔑 Production Team Login")
 
     usernames = list(USER_CREDENTIALS.keys())
@@ -124,63 +141,19 @@ if choice == "Production Team Login":
         if actual_password and entered_password == actual_password:
             st.success(f"Welcome, {selected_user}!")
 
-            # ------------------ PRODUCTION DATA ENTRY ------------------
-            st.subheader("Pls Enter the Production Data")
+            # Refresh Button
+            if st.button("🔄 Refresh Production Config"):
+                st.experimental_rerun()
 
-            # Product dropdown
-            products = production_config_df['Product'].unique().tolist()
-            selected_product = st.selectbox("Select Product", products)
-
-            # Show current date/time
-            now = datetime.now(SRI_LANKA_TZ).strftime(TIME_FORMAT)
-            st.write(f"📅 Date & Time: {now}")
-
-            # Filter subtopics for selected product
-            subtopics_df = production_config_df[production_config_df['Product'] == selected_product]
-
-            production_entry = {}
-            production_entry["Product"] = selected_product
-            production_entry["DateTime"] = now
-
-            for idx, row in subtopics_df.iterrows():
-                if row["Dropdown or Not"].strip().lower() == "yes":
-                    options = [opt.strip() for opt in row["Dropdown Options"].split(",")]
-                    production_entry[row["Subtopic"]] = st.selectbox(row["Subtopic"], options, key=row["Subtopic"])
-                else:
-                    production_entry[row["Subtopic"]] = st.text_input(row["Subtopic"], key=row["Subtopic"])
-
-            if st.button("Save Locally"):
-                save_locally(production_entry)
-                st.success("✅ Data saved locally!")
+            # Load Production Entry Section
+            production_data_entry()
         else:
             st.error("❌ Incorrect password!")
 
-        if actual_password and entered_password == actual_password:
-            st.success(f"Welcome, {selected_user}!")
-    
-        # Button to refresh Production Config from Google Sheet
-        if st.button("🔄 Refresh Production Config"):
-            st.experimental_rerun()  # This will reload the app and pull latest sheet data
-        
-        # Call the data entry function
-        production_data_entry()
+# ------------------ QUALITY TEAM LOGIN ------------------
+elif choice == "Quality Team Login":
+    st.header("Quality Team Login (Coming Soon...)")
 
-# ------------------- SEND DATA TO GOOGLE SHEET -------------------
-if choice == "Production Team Login":
-    st.markdown("---")
-    st.subheader("Send Local Data to Google Sheet")
-    local_data = load_local_data()
-
-    if local_data:
-        st.write(f"{len(local_data)} local records ready to send.")
-        if st.button("Pls send the data to the Google Sheet"):
-            for record in local_data:
-                append_to_sheet(sheet, "Production_Data", record)
-            clear_local_data()
-            st.success("✅ All data sent to Google Sheet successfully!")
-    else:
-        st.info("No local data to send.")
-
-
-
-
+# ------------------ DOWNTIME DATA RECORDINGS ------------------
+elif choice == "Downtime Data Recordings":
+    st.header("Downtime Data Recordings (Coming Soon...)")
