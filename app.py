@@ -716,16 +716,18 @@ def production_ui():
                     dynamic_record[subtopic] = st.text_input(subtopic, key=f"dyn_{idx}_{subtopic}")
         else:
             # Legacy numeric fields if no config
-            target_quantity = st.number_input("Target Quantity", min_value=1, step=1, key="target_quantity")
-            actual_quantity = st.number_input("Actual Quantity", min_value=1, step=1, key="actual_quantity")
-            slow_shot_count = st.number_input("Slow shot Count", min_value=0, step=1, key="slow_shot_count")
-            reject_quantity = st.number_input("Reject Quantity", min_value=0, step=1, key="reject_quantity")
-            good_pcs_quantity = st.number_input("Good PCS Quantity", min_value=0, step=1, key="good_pcs_quantity")
+            target_quantity = int(st.number_input("Target Quantity", min_value=1, step=1, key="target_quantity"))
+            actual_quantity = int(st.number_input("Actual Quantity", min_value=1, step=1, key="actual_quantity"))
+            slow_shot_count = int(st.number_input("Slow shot Count", min_value=0, step=1, key="slow_shot_count"))
+            reject_quantity = int(st.number_input("Reject Quantity", min_value=0, step=1, key="reject_quantity"))
+            good_pcs_quantity = int(st.number_input("Good PCS Quantity", min_value=0, step=1, key="good_pcs_quantity"))
+            
             dynamic_record["Target_Quantity"] = target_quantity
             dynamic_record["Actual_Quantity"] = actual_quantity
             dynamic_record["Slow_shot_Count"] = slow_shot_count
             dynamic_record["Reject_Quantity"] = reject_quantity
             dynamic_record["Good_PCS_Quantity"] = good_pcs_quantity
+
     
     comments = st.text_area("Comments", key="comments")
     
@@ -1037,6 +1039,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
