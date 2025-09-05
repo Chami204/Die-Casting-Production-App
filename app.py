@@ -370,7 +370,7 @@ def sync_with_google_sheets():
         if client is None:
             return
             
-        name = st.secrets["gsheet"]["spreadsheet_name"
+        name = st.secrets["gsheet"]["spreadsheet_name"]
         sh = client.open(name)
         
         # Sync production data (dynamic columns support)
@@ -1048,3 +1048,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
