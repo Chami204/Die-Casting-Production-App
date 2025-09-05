@@ -647,22 +647,13 @@ def production_ui():
     if production_data:
         st.subheader("Local Entries (Pending Sync)")
         try:
-            # Convert to list of dictionaries first
-            data_for_df = []
-            for record in production_data:
-                if isinstance(record, dict):
-                    data_for_df.append(record)
-            
-            if data_for_df:
-                local_df = pd.DataFrame(data_for_df)
-                display_cols = ["User", "Timestamp", "Date", "Machine", "Shift", "Item", "Target_Quantity", "Actual_Quantity", "Good_PCS_Quantity"]
-                available_cols = [col for col in display_cols if col in local_df.columns]
-                if available_cols:
-                    st.dataframe(local_df[available_cols].head(10))
-                else:
-                    st.info("No displayable data available")
+            if production_data:
+                local_df = pd.DataFrame(production_data)
+                
+                # Show all available columns
+                st.dataframe(local_df.head(10))
             else:
-                st.info("No valid production data available")
+                st.info("No production data available")
         except Exception as e:
             st.error(f"Error displaying data: {str(e)}")
 
@@ -908,5 +899,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
