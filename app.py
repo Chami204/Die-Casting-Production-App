@@ -1033,7 +1033,5 @@ def main():
 
 if __name__ == "__main__":
     main()
-1. Error displaying data: Expecting value: line 1 column 2 (char 1)-in production data entry after submitting
-2. No valid downtime data available - in downtime data entry after submitting
-3. No valid quality data available - in quality data entry after submitting
-Only fix these errors and give the full code without changing anything else
+
+
