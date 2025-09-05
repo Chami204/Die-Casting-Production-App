@@ -19,14 +19,6 @@ DEFAULT_SUBTOPICS = [
     "Number of rejects"
 ]
 
-# User credentials (in a real app, these should be stored securely)
-USERS = {
-    "Production": "prod123",
-    "Quality": "quality123", 
-    "Downtime": "downtime123",
-    "Admin": "admin123"
-}
-
 # ------------------ Initialize Session State ------------------
 if 'cfg' not in st.session_state:
     st.session_state.cfg = {}
@@ -34,10 +26,6 @@ if 'last_config_update' not in st.session_state:
     st.session_state.last_config_update = None
 if 'editing_entry' not in st.session_state:
     st.session_state.editing_entry = None
-if 'current_user' not in st.session_state:
-    st.session_state.current_user = None
-if 'logged_in' not in st.session_state:
-    st.session_state.logged_in = False
 
 # ------------------ Helper Functions ------------------
 def get_sri_lanka_time():
@@ -90,11 +78,11 @@ def open_spreadsheet(client):
         st.stop()
 
 def ensure_worksheets(sh):
-    # Production Config sheet
+    # Config sheet
     try:
-        ws_config = sh.worksheet("Production_Config")
+        ws_config = sh.worksheet("Config")
     except gspread.WorksheetNotFound:
-        ws_config = sh.add_worksheet(title="Production_Config", rows=1000, cols=2)
+        ws_config = sh.add_worksheet(title="Config", rows=1000, cols=2)
         rows = [["Product", "Subtopic"]]
         ws_config.update("A1", rows)
         ws_config.freeze(rows=1)
@@ -104,7 +92,7 @@ def ensure_worksheets(sh):
         ws_history = sh.worksheet("History")
     except gspread.WorksheetNotFound:
         ws_history = sh.add_worksheet(title = "History", rows=2000, cols=50)
-        headers = ["EntryID", "Timestamp", "User", "Product", "Comments"] + DEFAULT_SUBTOPICS
+        headers = ["EntryID", "Timestamp", "Product", "Comments"] + DEFAULT_SUBTOPICS
         ws_history.update("A1", [headers])
         ws_history.freeze(rows=1)
 
@@ -140,23 +128,6 @@ def write_config(ws_config, cfg: dict):
         st.error(f"Error writing config: {str(e)}")
         return False
 
-def add_product_with_default_subtopics(ws_config, product_name):
-    """Add a new product with all default subtopics"""
-    if not product_name.strip():
-        return False, "Product name cannot be empty"
-    
-    if product_name in st.session_state.cfg:
-        return False, "Product already exists"
-    
-    # Add the product with all default subtopics
-    st.session_state.cfg[product_name] = DEFAULT_SUBTOPICS.copy()
-    
-    # Update the Google Sheet
-    if write_config(ws_config, st.session_state.cfg):
-        return True, f"Product '{product_name}' created with default subtopics"
-    else:
-        return False, "Failed to update Google Sheets"
-
 def refresh_config_if_needed(ws_config):
     """Refresh config from Google Sheets if needed"""
     if should_refresh_config():
@@ -169,7 +140,7 @@ def refresh_config_if_needed(ws_config):
 def ensure_history_headers(ws_history, product):
     current_subtopics = st.session_state.cfg.get(product, DEFAULT_SUBTOPICS.copy())
     headers = ws_history.row_values(1)
-    needed_headers = ["EntryID", "Timestamp", "User", "Product", "Comments"] + current_subtopics
+    needed_headers = ["EntryID", "Timestamp", "Product", "Comments"] + current_subtopics
     
     if set(headers) != set(needed_headers):
         ws_history.update("A1", [needed_headers])
@@ -246,35 +217,9 @@ def find_entry_by_id(ws_history, entry_id: str) -> dict:
         st.error(f"Error finding entry: {str(e)}")
         return None
 
-# ------------------ Login System ------------------
-def login_system():
-    st.sidebar.header("Login")
-    
-    if st.session_state.logged_in:
-        st.sidebar.success(f"Logged in as: {st.session_state.current_user}")
-        if st.sidebar.button("Logout"):
-            st.session_state.logged_in = False
-            st.session_state.current_user = None
-            st.rerun()
-        return True
-    
-    username = st.sidebar.selectbox("Select User", options=[""] + list(USERS.keys()))
-    password = st.sidebar.text_input("Password", type="password")
-    
-    if st.sidebar.button("Login"):
-        if username in USERS and USERS[username] == password:
-            st.session_state.logged_in = True
-            st.session_state.current_user = username
-            st.sidebar.success("Login successful!")
-            st.rerun()
-        else:
-            st.sidebar.error("Invalid username or password")
-    
-    return st.session_state.logged_in
-
 # ------------------ Admin UI ------------------
 def admin_ui(ws_config):
-    st.subheader("Admin Panel - Manage Products")
+    st.subheader("Manage Products & Subtopics")
     
     # Auto-refresh config to see changes from other devices
     refresh_config_if_needed(ws_config)
@@ -283,55 +228,75 @@ def admin_ui(ws_config):
     with st.expander("Create New Product"):
         new_product = st.text_input("New Product Name", key="new_product")
         if st.button("Create Product"):
-            success, message = add_product_with_default_subtopics(ws_config, new_product)
-            if success:
-                st.success(message)
-                st.rerun()
+            if not new_product.strip():
+                st.warning("Enter a valid product name.")
+            elif new_product in st.session_state.cfg:
+                st.warning("That product already exists.")
             else:
-                st.error(message)
+                st.session_state.cfg[new_product] = DEFAULT_SUBTOPICS.copy()
+                if write_config(ws_config, st.session_state.cfg):
+                    st.success(f"Product '{new_product}' created with default subtopics.")
+                    st.rerun()
 
-    # Display current configuration
+    # Edit existing product
+    if st.session_state.cfg:
+        with st.expander("Edit Product"):
+            prod = st.selectbox("Select Product", sorted(st.session_state.cfg.keys()), key="edit_product")
+            st.caption("Current subtopics:")
+            st.write(st.session_state.cfg[prod])
+
+            # Add new subtopic
+            new_sub = st.text_input("Add Subtopic", key="new_subtopic")
+            if st.button("Add Subtopic to Product"):
+                if new_sub.strip():
+                    st.session_state.cfg[prod].append(new_sub.strip())
+                    if write_config(ws_config, st.session_state.cfg):
+                        st.success(f"Added '{new_sub}' to {prod}.")
+                        st.rerun()
+
+            # Remove subtopics
+            subs_to_remove = st.multiselect("Remove subtopics", st.session_state.cfg[prod], key="remove_subtopics")
+            if st.button("Remove Selected Subtopics"):
+                if subs_to_remove:
+                    st.session_state.cfg[prod] = [s for s in st.session_state.cfg[prod] if s not in subs_to_remove]
+                    if write_config(ws_config, st.session_state.cfg):
+                        st.warning(f"Removed: {', '.join(subs_to_remove)}")
+                        st.rerun()
+
+        # Delete product
+        with st.expander("Delete Product"):
+            prod_del = st.selectbox("Choose product to delete", sorted(st.session_state.cfg.keys()), key="delete_product")
+            if st.button("Delete Product Permanently"):
+                del st.session_state.cfg[prod_del]
+                if write_config(ws_config, st.session_state.cfg):
+                    st.error(f"Deleted product '{prod_del}' and its subtopics.")
+                    st.rerun()
+
     st.divider()
     st.subheader("Current Products Configuration")
-    st.info("""
-    Instructions:
-    1. To add a product: Use the form above or edit the 'Production_Config' sheet directly
-    2. When adding directly to Google Sheets: Add only the product name in column A
-    3. The app will automatically add all default subtopics when it detects a new product
-    4. Click 'Refresh Configuration' to sync changes
-    """)
-    
-    if st.session_state.cfg:
-        for product, subtopics in st.session_state.cfg.items():
-            with st.expander(f"Product: {product}"):
-                st.write("Subtopics:")
-                for subtopic in subtopics:
-                    st.write(f"- {subtopic}")
-    else:
-        st.info("No products configured yet.")
+    st.json(st.session_state.cfg)
     
     # Manual refresh button
     if st.button("🔄 Refresh Configuration"):
         st.session_state.last_config_update = None
         st.rerun()
 
-# ------------------ Production UI ------------------
-def production_ui(ws_config, ws_history):
-    st.subheader("Production Data Entry")
+# ------------------ User UI ------------------
+def user_ui(ws_config, ws_history):
+    st.subheader("Enter Data")
     
     # Manual refresh button
     if st.button("🔄 Refresh Data"):
-        refresh_config_if_needed(ws_config)
         st.rerun()
 
-    # Auto-refresh config to get latest changes
+    # Auto-refresh config to get latest changes from admin
     refresh_config_if_needed(ws_config)
     
     if not st.session_state.cfg:
-        st.info("No products available yet. Ask Admin to create a product.")
+        st.info("No products available yet. Ask Admin to create a product in Admin mode.")
         return
 
-    product = st.selectbox("Select Product", sorted(st.session_state.cfg.keys()), key="user_product")
+    product = st.selectbox("Select Main Product", sorted(st.session_state.cfg.keys()), key="user_product")
     current_subtopics = st.session_state.cfg.get(product, DEFAULT_SUBTOPICS.copy())
     
     st.write("Fill **all fields** below:")
@@ -361,7 +326,6 @@ def production_ui(ws_config, ws_history):
                 record = {
                     "EntryID": entry_id,
                     "Timestamp": get_sri_lanka_time(),
-                    "User": st.session_state.current_user,
                     "Product": product,
                     **values,
                     "Comments": comments
@@ -371,31 +335,92 @@ def production_ui(ws_config, ws_history):
             except Exception as e:
                 st.error(f"Error saving data: {str(e)}")
 
-    # Display recent entries
+    # Display recent entries with edit functionality
     df = get_recent_entries(ws_history, product)
     if not df.empty:
         st.subheader("Recent Entries (for this product)")
-        st.dataframe(df[["Timestamp", "User", "Product"] + current_subtopics + ["Comments"]].head(10))
+        
+        # Edit functionality
+        if st.session_state.editing_entry:
+            entry_to_edit = st.session_state.editing_entry
+            st.write(f"**Editing Entry ID:** {entry_to_edit}")
+            
+            # Get the entry data
+            entry_data = find_entry_by_id(ws_history, entry_to_edit)
+            if entry_data:
+                edited_values = {}
+                
+                # Create editable fields
+                for subtopic in current_subtopics:
+                    if subtopic in entry_data:
+                        if "number" in subtopic.lower() or "num" in subtopic.lower() or "rejects" in subtopic.lower():
+                            edited_values[subtopic] = st.number_input(
+                                f"{subtopic}", 
+                                value=int(entry_data[subtopic]) if entry_data[subtopic] and entry_data[subtopic].isdigit() else 0,
+                                min_value=0,
+                                step=1,
+                                key=f"edit_{subtopic}_{entry_to_edit}"
+                            )
+                        elif "time" in subtopic.lower():
+                            edited_values[subtopic] = st.text_input(
+                                f"{subtopic}", 
+                                value=get_sri_lanka_time(),  # Always use current time for edits
+                                key=f"edit_{subtopic}_{entry_to_edit}"
+                            )
+                        else:
+                            edited_values[subtopic] = st.text_input(
+                                f"{subtopic}", 
+                                value=entry_data[subtopic],
+                                key=f"edit_{subtopic}_{entry_to_edit}"
+                            )
+                
+                # Comments field (editable)
+                edited_comments = st.text_area(
+                    "Comments", 
+                    value=entry_data.get("Comments", ""),
+                    key=f"edit_comments_{entry_to_edit}"
+                )
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("💾 Save Changes"):
+                        # Prepare updated data
+                        updated_data = {
+                            **edited_values,
+                            "Comments": f"{edited_comments}\n\n[Edited at {get_sri_lanka_time()}]",
+                            "Timestamp": get_sri_lanka_time()  # Update timestamp
+                        }
+                        
+                        if update_entry(ws_history, entry_to_edit, updated_data):
+                            st.success("Entry updated successfully!")
+                            st.session_state.editing_entry = None
+                            st.rerun()
+                
+                with col2:
+                    if st.button("❌ Cancel Edit"):
+                        st.session_state.editing_entry = None
+                        st.rerun()
+            else:
+                st.error("Entry not found.")
+                st.session_state.editing_entry = None
+        
+        # Display entries with edit buttons
+        for _, row in df.iterrows():
+            with st.expander(f"Entry {row.get('EntryID', 'N/A')} - {row.get('Timestamp', 'N/A')}"):
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.write(f"**Product:** {row.get('Product', 'N/A')}")
+                    for subtopic in current_subtopics:
+                        if subtopic in row:
+                            st.write(f"**{subtopic}:** {row[subtopic]}")
+                    st.write(f"**Comments:** {row.get('Comments', '')}")
+                
+                with col2:
+                    if st.button("✏️ Edit", key=f"edit_{row.get('EntryID', '')}"):
+                        st.session_state.editing_entry = row.get('EntryID')
+                        st.rerun()
     else:
         st.caption("No entries yet for this product.")
-
-# ------------------ Quality UI ------------------
-def quality_ui():
-    st.subheader("Quality Module - Coming Soon")
-    st.info("Quality module will be implemented in the next update")
-    st.write("Planned features:")
-    st.write("- Quality inspections recording")
-    st.write("- Defect tracking")
-    st.write("- Quality reports")
-
-# ------------------ Downtime UI ------------------
-def downtime_ui():
-    st.subheader("Downtime Module - Coming Soon")
-    st.info("Downtime module will be implemented in the next update")
-    st.write("Planned features:")
-    st.write("- Machine downtime tracking")
-    st.write("- Reason categorization")
-    st.write("- Downtime analysis reports")
 
 # ------------------ Main ------------------
 def main():
@@ -412,44 +437,22 @@ def main():
             st.session_state.cfg = read_config(ws_config)
             st.session_state.last_config_update = datetime.now()
 
-        # Check if there are products without subtopics and add default ones
-        products_in_sheet = set()
-        try:
-            records = ws_config.get_all_records()
-            for record in records:
-                product = str(record.get("Product", "")).strip()
-                if product:
-                    products_in_sheet.add(product)
-        except:
-            pass
-            
-        # Add default subtopics for any products that might be missing them
-        config_changed = False
-        for product in products_in_sheet:
-            if product not in st.session_state.cfg:
-                st.session_state.cfg[product] = DEFAULT_SUBTOPICS.copy()
-                config_changed = True
-                
-        if config_changed:
-            write_config(ws_config, st.session_state.cfg)
+        st.sidebar.header("Navigation")
+        mode = st.sidebar.radio("Mode", ["User", "Admin"], key="mode_selector")
 
-        # Login system
-        if not login_system():
-            st.info("Please login to access the system")
-            return
-
-        # Navigation based on user role
-        if st.session_state.current_user == "Admin":
-            admin_ui(ws_config)
-        elif st.session_state.current_user == "Production":
-            production_ui(ws_config, ws_history)
-        elif st.session_state.current_user == "Quality":
-            quality_ui()
-        elif st.session_state.current_user == "Downtime":
-            downtime_ui()
+        if mode == "Admin":
+            pw = st.text_input("Admin Password", type="password", key="admin_pw")
+            if pw == "admin123":
+                admin_ui(ws_config)
+            elif pw:
+                st.warning("Incorrect admin password")
+        else:
+            user_ui(ws_config, ws_history)
 
     except Exception as e:
         st.error(f"Application error: {str(e)}")
 
 if __name__ == "__main__":
     main()
+
+
