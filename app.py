@@ -233,11 +233,12 @@ def downtime_data_entry(logged_user):
 
     with st.form(key="downtime_entry_form"):
         for col in df.columns:
-            # Collect all non-empty values under the column
-            options = df[col].dropna().unique().tolist()
-            if options:
+            # Get all non-empty, non-whitespace values under the column
+            options = [str(x).strip() for x in df[col].dropna().unique() if str(x).strip() != ""]
+            
+            if options:  # If there are valid options → show dropdown
                 entry[col] = st.selectbox(col, options, key=f"downtime_{col}")
-            else:
+            else:        # No valid options → show text input
                 entry[col] = st.text_input(col, key=f"downtime_{col}")
 
         submitted = st.form_submit_button("Save Locally")
@@ -255,6 +256,7 @@ def downtime_data_entry(logged_user):
         st.session_state.downtime_logged_in = False
         st.session_state.downtime_logged_user = ""
         st.experimental_rerun()
+
 
 
 # ------------------ LOAD CONFIG SHEETS ------------------
@@ -322,6 +324,7 @@ else:
                 st.experimental_rerun()
             else:
                 st.error("❌ Incorrect password!")
+
 
 
 
