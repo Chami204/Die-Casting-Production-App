@@ -291,6 +291,109 @@ def sync_quality_to_google_sheet():
     except Exception as e:
         st.error(f"Error syncing quality data: {str(e)}")
 
+#--------------------------------------DOWNTIME DATA ENTRY------------------------
+def downtime_data_entry(logged_user):
+    if "downtime_config_df" not in st.session_state:
+        st.error("⚠️ Downtime_Config not loaded!")
+        return
+
+    downtime_config_df = st.session_state.downtime_config_df
+    if downtime_config_df.empty:
+        st.error("⚠️ No data found in Downtime_Config sheet!")
+        return
+
+    # Load products from Production_Config
+    if "production_config_df" not in st.session_state:
+        st.error("⚠️ Production_Config not loaded!")
+        return
+    products = st.session_state.production_config_df['Product'].unique().tolist()
+
+    st.subheader("Please Enter the Downtime Data")
+
+    # Planned Item selection instead of Product
+    selected_product = st.selectbox("Select Planned Item", products, key="downtime_planned_item")
+
+    # Current date/time
+    now = datetime.now(SRI_LANKA_TZ).strftime(TIME_FORMAT)
+    st.write(f"📅 Date & Time: {now}")
+
+    downtime_entry = {"User": logged_user, "Planned Item": selected_product, "DateTime": now}
+
+    # Iterate over columns (subtopics)
+    for col in downtime_config_df.columns:
+        options = downtime_config_df[col].dropna().tolist()
+        if options:
+            downtime_entry[col] = st.selectbox(col, options, key=f"downtime_{col}")
+        else:
+            downtime_entry[col] = st.text_input(col, key=f"downtime_{col}")
+
+    # Save locally
+    if st.button("Save Downtime Data Locally"):
+        if "downtime_local_storage" not in st.session_state:
+            st.session_state.downtime_local_storage = []
+        st.session_state.downtime_local_storage.append(downtime_entry)
+        st.success("Downtime data saved locally!")
+
+#---------------DOWNTIME SYNC---------------------------------------
+def sync_downtime_to_google_sheet():
+    if "downtime_local_storage" not in st.session_state or len(st.session_state.downtime_local_storage) == 0:
+        st.warning("No local downtime data to sync!")
+        return
+
+    sheet = get_gsheet_data(SHEET_NAME)
+    if sheet is None:
+        st.error("Cannot connect to Google Sheet.")
+        return
+
+    try:
+        worksheet_name = "Downtime_History"
+        try:
+            worksheet = sheet.worksheet(worksheet_name)
+        except gspread.WorksheetNotFound:
+            worksheet = sheet.add_worksheet(title=worksheet_name, rows="1000", cols="50")
+
+        # Existing data headers
+        existing_data = worksheet.get_all_records()
+        if existing_data:
+            existing_headers = list(existing_data[0].keys())
+        else:
+            existing_headers = []
+
+        # Collect all keys from local storage
+        all_keys = set()
+        for entry in st.session_state.downtime_local_storage:
+            all_keys.update(entry.keys())
+        all_keys = list(all_keys)
+
+        # Ensure 'User' is first column
+        if "User" in all_keys:
+            all_keys.remove("User")
+        all_keys = ["User"] + all_keys
+
+        # Update worksheet header row if new keys are added
+        worksheet_values = worksheet.get_all_values()
+        if worksheet_values:
+            worksheet_header = worksheet_values[0]
+            for key in all_keys:
+                if key not in worksheet_header:
+                    worksheet.update_cell(1, len(worksheet_header) + 1, key)
+                    worksheet_header.append(key)
+        else:
+            worksheet.append_row(all_keys)
+
+        # Append rows
+        for entry in st.session_state.downtime_local_storage:
+            row = [entry.get(key, "") for key in all_keys]
+            worksheet.append_row(row)
+
+        st.success(f"✅ Synced {len(st.session_state.downtime_local_storage)} downtime records to Google Sheet.")
+        st.session_state.downtime_local_storage = []
+
+    except Exception as e:
+        st.error(f"Error syncing downtime data: {str(e)}")
+
+
+
 
 
 
@@ -408,15 +511,17 @@ elif choice == "Quality Team Login":
 
 
 
-# ------------------ DOWNTIME DATA RECORDINGS ------------------
+# ------------------ DOWNTIME LOGIN ------------------
 elif choice == "Downtime Data Recordings":
-    st.header("🔑 Downtime Data Recordings Login")
+    st.header("🔑 Downtime Team Login")
 
     # Initialize session state
     if "downtime_logged_in" not in st.session_state:
         st.session_state.downtime_logged_in = False
     if "downtime_logged_user" not in st.session_state:
         st.session_state.downtime_logged_user = ""
+    if "downtime_local_storage" not in st.session_state:
+        st.session_state.downtime_local_storage = []
 
     col1, col2 = st.columns([3, 1])
     with col1:
@@ -436,10 +541,26 @@ elif choice == "Downtime Data Recordings":
         else:
             st.error("❌ Incorrect password or empty username!")
 
-    # Show downtime data entry section only if logged in
     if st.session_state.downtime_logged_in:
-        st.subheader(f"Welcome {st.session_state.downtime_logged_user}, enter downtime data here.")
-        # TODO: Add your downtime data entry form here
+        # Load Downtime Config if not loaded
+        if "downtime_config_df" not in st.session_state:
+            sheet = get_gsheet_data(SHEET_NAME)
+            st.session_state.downtime_config_df = read_sheet(sheet, "Downtime_Config")
+
+        # Manual Refresh Button
+        if st.button("🔄 Refresh Downtime Config Data"):
+            sheet = get_gsheet_data(SHEET_NAME)
+            st.session_state.downtime_config_df = read_sheet(sheet, "Downtime_Config")
+            st.success("Downtime Config refreshed!")
+
+        # Show Downtime Data Entry Form
+        downtime_data_entry(logged_user=st.session_state.downtime_logged_user)
+
+        # Sync Button
+        if st.button("📤 Sync Downtime Data to Google Sheet"):
+            sync_downtime_to_google_sheet()
+
+
 
 
 
