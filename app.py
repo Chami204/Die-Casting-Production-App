@@ -9,7 +9,7 @@ import os
 import json
 
 # ---------------------------- SETTINGS ----------------------------
-SHEET_NAME = "FlowApp_Data"
+SHEET_NAME = "Your_Google_Sheet_Name"
 PRODUCTION_CONFIG_SHEET = "Production_Config"
 USER_CREDENTIALS_SHEET = "User_Credentials"
 LOCAL_SAVE_FILE = "local_production_data.json"
@@ -17,12 +17,47 @@ LOCAL_SAVE_FILE = "local_production_data.json"
 SRI_LANKA_TZ = pytz.timezone("Asia/Colombo")
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-# ------------------------ GOOGLE SHEETS --------------------------
+# ------------------ GOOGLE SHEETS AUTHENTICATION ------------------
+def get_gs_client():
+    try:
+        if 'gcp_service_account' not in st.secrets:
+            st.error("Google Service Account credentials not found in secrets.")
+            return None
+
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ]
+
+        creds_dict = {
+            "type": st.secrets["gcp_service_account"]["type"],
+            "project_id": st.secrets["gcp_service_account"]["project_id"],
+            "private_key_id": st.secrets["gcp_service_account"]["private_key_id"],
+            "private_key": st.secrets["gcp_service_account"]["private_key"].replace('\\n', '\n'),
+            "client_email": st.secrets["gcp_service_account"]["client_email"],
+            "client_id": st.secrets["gcp_service_account"]["client_id"],
+            "auth_uri": st.secrets["gcp_service_account"]["auth_uri"],
+            "token_uri": st.secrets["gcp_service_account"]["token_uri"],
+            "auth_provider_x509_cert_url": st.secrets["gcp_service_account"]["auth_provider_x509_cert_url"],
+            "client_x509_cert_url": st.secrets["gcp_service_account"]["client_x509_cert_url"]
+        }
+
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        return gspread.authorize(creds)
+    except Exception as e:
+        st.error(f"Failed to authenticate with Google Sheets: {str(e)}")
+        return None
+
 def get_gsheet_data(sheet_name):
-    creds = Credentials.from_service_account_file("service_account.json")
-    gc = gspread.authorize(creds)
-    sh = gc.open(sheet_name)
-    return sh
+    gs_client = get_gs_client()
+    if gs_client is None:
+        st.stop()
+    try:
+        sheet = gs_client.open(sheet_name)
+        return sheet
+    except Exception as e:
+        st.error(f"Failed to open Google Sheet '{sheet_name}': {str(e)}")
+        st.stop()
 
 def read_sheet(sheet, worksheet_name):
     worksheet = sheet.worksheet(worksheet_name)
@@ -31,7 +66,6 @@ def read_sheet(sheet, worksheet_name):
 
 def append_to_sheet(sheet, worksheet_name, data_dict):
     worksheet = sheet.worksheet(worksheet_name)
-    # Prepare row in correct order
     existing_columns = worksheet.row_values(1)
     row = []
     for col in existing_columns:
@@ -60,10 +94,8 @@ def clear_local_data():
     if os.path.exists(LOCAL_SAVE_FILE):
         os.remove(LOCAL_SAVE_FILE)
 
-# ------------------------ MAIN APP -------------------------------
+# ------------------------ STREAMLIT APP ---------------------------
 st.set_page_config(page_title="Production App", page_icon="🛠️", layout="centered")
-
-# MAIN MENU
 st.title("🏭 Production App")
 
 menu = ["Production Team Login", "Quality Team Login", "Downtime Data Recordings"]
@@ -83,12 +115,10 @@ if choice == "Production Team Login":
     entered_password = st.text_input("Enter Password", type="password")
     
     if st.button("Login"):
-        # Validate password
         actual_password = user_credentials_df.loc[user_credentials_df['username'] == selected_user, 'password'].values[0]
         if entered_password == actual_password:
             st.success(f"Welcome, {selected_user}!")
             
-            # ------------------ PRODUCTION DATA ENTRY ------------------
             st.subheader("Pls Enter the Production Data")
             
             # Product dropdown
@@ -105,6 +135,7 @@ if choice == "Production Team Login":
             production_entry = {}
             production_entry["Product"] = selected_product
             production_entry["DateTime"] = now
+            
             for idx, row in subtopics_df.iterrows():
                 if row["Dropdown or Not"].strip().lower() == "yes":
                     options = [opt.strip() for opt in row["Dropdown Options"].split(",")]
@@ -115,7 +146,7 @@ if choice == "Production Team Login":
             if st.button("Save Locally"):
                 save_locally(production_entry)
                 st.success("✅ Data saved locally!")
-            
+        
         else:
             st.error("❌ Incorrect password!")
 
@@ -134,4 +165,3 @@ if choice == "Production Team Login":
             st.success("✅ All data sent to Google Sheet successfully!")
     else:
         st.info("No local data to send.")
-
