@@ -453,34 +453,36 @@ def sync_with_google_sheets():
             except Exception as e:
                 st.error(f"Error syncing quality data: {str(e)}")
         
+       
         # Display local downtime entries
         downtime_data = st.session_state.get('die_casting_downtime', [])
-            if downtime_data:
-                st.subheader("Local Downtime Entries (Pending Sync)")
-                try:
-                    data_for_df = []
-                    for record in downtime_data:
-                        if isinstance(record, dict):
-                            data_for_df.append(record)
-                        else:
-                            try:
-                                # Attempt to parse JSON string
-                                data_for_df.append(json.loads(record))
-                            except:
-                                continue  # skip invalid entries
-                    
-                    if data_for_df:
-                        local_df = pd.DataFrame(data_for_df)
-                        display_cols = ["User", "Timestamp", "Machine", "Shift", "Breakdown_Reason", "Duration_Mins"]
-                        available_cols = [col for col in display_cols if col in local_df.columns]
-                        if available_cols:
-                            st.dataframe(local_df[available_cols].head(10))
-                        else:
-                            st.info("No displayable downtime data available")
+        if downtime_data:
+            st.subheader("Local Downtime Entries (Pending Sync)")
+            try:
+                data_for_df = []
+                for record in downtime_data:
+                    if isinstance(record, dict):
+                        data_for_df.append(record)
                     else:
-                        st.info("No valid downtime data available")
-                except Exception as e:
-                    st.error(f"Error displaying downtime data: {str(e)}")
+                        try:
+                            # Attempt to parse JSON string
+                            data_for_df.append(json.loads(record))
+                        except:
+                            continue  # skip invalid entries
+                
+                if data_for_df:
+                    local_df = pd.DataFrame(data_for_df)
+                    display_cols = ["User", "Timestamp", "Machine", "Shift", "Breakdown_Reason", "Duration_Mins"]
+                    available_cols = [col for col in display_cols if col in local_df.columns]
+                    if available_cols:
+                        st.dataframe(local_df[available_cols].head(10))
+                    else:
+                        st.info("No displayable downtime data available")
+                else:
+                    st.info("No valid downtime data available")
+            except Exception as e:
+                st.error(f"Error displaying downtime data: {str(e)}")
+
 
         
         if sync_count > 0:
@@ -1051,6 +1053,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
