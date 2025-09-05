@@ -244,6 +244,8 @@ if "qual_logged_user" not in st.session_state:
     st.session_state.qual_logged_user = ""
 if "downtime_logged_user" not in st.session_state:
     st.session_state.downtime_logged_user = ""
+if "current_page" not in st.session_state:
+    st.session_state.current_page = "Home"
 
 sheet = get_gsheet_data(SHEET_NAME)
 if sheet:
@@ -254,6 +256,21 @@ if sheet:
     if "downtime_config_df" not in st.session_state:
         st.session_state.downtime_config_df = read_sheet(sheet, DOWNTIME_CONFIG_SHEET)
 
+# Create sidebar menu
+menu = ["Home", "Production Team Login", "Quality Team Login", "Downtime Data Recordings"]
+if not st.session_state.prod_logged_in and not st.session_state.qual_logged_in and not st.session_state.downtime_logged_in:
+    choice = st.sidebar.selectbox("Menu", menu, index=menu.index(st.session_state.current_page) if st.session_state.current_page in menu else 0)
+    st.session_state.current_page = choice
+else:
+    # If logged in, show a different sidebar or hide it
+    st.sidebar.write("You are currently logged in")
+    if st.sidebar.button("Return to Home"):
+        st.session_state.prod_logged_in = False
+        st.session_state.qual_logged_in = False
+        st.session_state.downtime_logged_in = False
+        st.session_state.current_page = "Home"
+        st.experimental_rerun()
+
 # Check if user is logged in to any section and show appropriate content
 if st.session_state.prod_logged_in:
     production_data_entry(st.session_state.logged_user)
@@ -263,16 +280,13 @@ elif st.session_state.downtime_logged_in:
     downtime_data_entry(st.session_state.downtime_logged_user)
 else:
     # Only show the menu if no one is logged in
-    menu = ["Home", "Production Team Login", "Quality Team Login", "Downtime Data Recordings"]
-    choice = st.sidebar.selectbox("Menu", menu)
-
     # ------------------ HOME ------------------
-    if choice == "Home":
+    if st.session_state.current_page == "Home":
         st.markdown("<h2 style='text-align: center;'>Welcome to Die Casting Production App</h2>", unsafe_allow_html=True)
         st.markdown("<h4 style='text-align: center;'>Please select a section to continue</h4>", unsafe_allow_html=True)
 
     # ------------------ PRODUCTION TEAM LOGIN ------------------
-    elif choice == "Production Team Login":
+    elif st.session_state.current_page == "Production Team Login":
         st.header("🔑 Production Team Login")
         usernames = list(USER_CREDENTIALS.keys())
         selected_user = st.selectbox("Select Username", usernames)
@@ -289,7 +303,7 @@ else:
                 st.error("❌ Incorrect password!")
 
     # ------------------ QUALITY TEAM LOGIN ------------------
-    elif choice == "Quality Team Login":
+    elif st.session_state.current_page == "Quality Team Login":
         st.header("🔑 Quality Team Login")
         entered_user = st.text_input("Enter Your Name")
         entered_pass = st.text_input("Enter Password", type="password")
@@ -304,7 +318,7 @@ else:
                 st.error("❌ Incorrect password!")
 
     # ------------------ DOWNTIME DATA RECORDINGS ------------------
-    elif choice == "Downtime Data Recordings":
+    elif st.session_state.current_page == "Downtime Data Recordings":
         st.header("🔑 Downtime Team Login")
         entered_user = st.text_input("Enter Your Name")
         entered_pass = st.text_input("Enter Password", type="password")
