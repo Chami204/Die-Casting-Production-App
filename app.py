@@ -621,120 +621,122 @@ def production_ui():
                 st.warning("Using local data cache")
             st.rerun()
     
+    # --- Load Production Config dynamically from Google Sheets ---
     refresh_config_if_needed()
-    
-    # Read downtime configuration for machines
-    downtime_config = read_downtime_config()
-    machines = downtime_config["machines"]
-    
-    # Read available products from production config
-    available_products = list(st.session_state.cfg.keys())
-    
-    if not available_products:
-        st.info("No products available yet.")
+
+    if not initialize_google_sheets():
+        st.error("Cannot connect to Google Sheets. Using offline mode.")
         return
 
-    st.write("Fill **all fields** below:")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Date field (auto-filled with current date)
-        current_date = datetime.now(SRI_LANKA_TZ).strftime("%Y-%m-%d")
-        date_value = st.text_input("Date", value=current_date, key="date_field")
-        
-        # Machine dropdown
-        machine_value = st.selectbox("Machine", options=machines, key="machine_field")
-        
-        # Shift dropdown
-        shift_value = st.selectbox("Shift", options=["Day", "Night"], key="shift_field")
-        
-        # Team dropdown
-        team_value = st.selectbox("Team", options=["A", "B", "C"], key="team_field")
-        
-        # Item dropdown (from Production_Config)
-        item_value = st.selectbox("Item", options=available_products, key="item_field")
-    
-    with col2:
-        # Target Quantity (cannot be 0)
-        target_quantity = st.number_input("Target Quantity", min_value=1, step=1, key="target_quantity")
-        
-        # Actual Quantity (cannot be 0)
-        actual_quantity = st.number_input("Actual Quantity", min_value=1, step=1, key="actual_quantity")
-        
-        # Slow shot Count (can be 0)
-        slow_shot_count = st.number_input("Slow shot Count", min_value=0, step=1, key="slow_shot_count")
-        
-        # Reject Quantity (can be 0)
-        reject_quantity = st.number_input("Reject Quantity", min_value=0, step=1, key="reject_quantity")
-        
-        # Good PCS Quantity (manually entered)
-        good_pcs_quantity = st.number_input("Good PCS Quantity", min_value=0, step=1, key="good_pcs_quantity")
+    try:
+        client = get_gs_client()
+        name = st.secrets["gsheet"]["spreadsheet_name"]
+        sh = client.open(name)
+        ws_config = sh.worksheet("Production_Config")
+        config_values = ws_config.get_all_records()
+        config_df = pd.DataFrame(config_values)
+    except Exception as e:
+        st.error(f"Error reading Production_Config: {str(e)}")
+        return
 
-    comments = st.text_area("Comments", key="comments")
+    # Validate Production_Config columns
+    required_cols = ["Item Name", "Subtopic", "Dropdown or Not", "Dropdown Options"]
+    for col in required_cols:
+        if col not in config_df.columns:
+            st.error(f"Missing required column in Production_Config: {col}")
+            return
 
+    # --- Step 1: Select Item Name ---
+    item_names = config_df["Item Name"].dropna().unique().tolist()
+    selected_item = st.selectbox("Select Item Name", [""] + item_names, key="item_field")
+
+    if not selected_item:
+        st.info("Please select an Item Name to proceed.")
+        return
+
+    # Filter subtopics for the selected item
+    filtered_config = config_df[config_df["Item Name"] == selected_item]
+
+    # --- Step 2: Dynamically Generate Fields ---
+    st.subheader(f"Enter Data for {selected_item}")
+    record = {
+        "User": st.session_state.current_user,
+        "EntryID": uuid.uuid4().hex,
+        "Timestamp": get_sri_lanka_time(),
+        "Item Name": selected_item
+    }
+
+    for _, row in filtered_config.iterrows():
+        subtopic = str(row["Subtopic"]).strip()
+        dropdown_flag = str(row["Dropdown or Not"]).strip().lower() == "yes"
+
+        if dropdown_flag:
+            options = [opt.strip() for opt in str(row["Dropdown Options"]).split(",") if opt.strip()]
+            if options:
+                record[subtopic] = st.selectbox(subtopic, [""] + options, key=f"subtopic_{subtopic}")
+            else:
+                record[subtopic] = st.text_input(subtopic, key=f"subtopic_{subtopic}")
+        else:
+            record[subtopic] = st.text_input(subtopic, key=f"subtopic_{subtopic}")
+
+    # Comments field
+    record["Comments"] = st.text_area("Comments", key="comments")
+
+    # --- Step 3: Submit and Update History Dynamically ---
     if st.button("Submit", key="submit_btn"):
-        # Validate required fields
-        if target_quantity == 0:
-            st.error("Target Quantity cannot be zero")
-        elif actual_quantity == 0:
-            st.error("Actual Quantity cannot be zero")
-        elif good_pcs_quantity == 0:
-            st.error("Good PCS Quantity cannot be zero")
-            pass
+        # Validate empty fields
+        if any(value == "" for key, value in record.items() if key not in ["Comments"]):
+            st.error("Please fill all required fields before submitting.")
         else:
             try:
-                entry_id = uuid.uuid4().hex
-                record = {
-                    "User": st.session_state.current_user,
-                    "EntryID": entry_id,
-                    "Timestamp": get_sri_lanka_time(),
-                    "Date": date_value,
-                    "Machine": machine_value,
-                    "Shift": shift_value,
-                    "Team": team_value,
-                    "Item": item_value,
-                    "Target_Quantity": target_quantity,
-                    "Actual_Quantity": actual_quantity,
-                    "Slow_shot_Count": slow_shot_count,
-                    "Reject_Quantity": reject_quantity,
-                    "Good_PCS_Quantity": good_pcs_quantity,
-                    "Comments": comments
-                }
-                save_to_local('production', record)
-                st.success(f"Saved locally! EntryID: {entry_id}")
-                
-            except Exception as e:
-                st.error(f"Error saving data: {str(e)}")
+                # Load existing history sheet
+                try:
+                    ws_history = sh.worksheet("History")
+                    history_values = ws_history.get_all_records()
+                    history_df = pd.DataFrame(history_values)
+                except gspread.WorksheetNotFound:
+                    st.warning("History sheet not found. Creating a new one.")
+                    history_df = pd.DataFrame()
 
-    # Display local entries
+                # Add missing columns dynamically
+                for key in record.keys():
+                    if key not in history_df.columns:
+                        history_df[key] = ""
+
+                # Append the new row
+                history_df = pd.concat([history_df, pd.DataFrame([record])], ignore_index=True)
+
+                # Update Google Sheet
+                ws_history.update([history_df.columns.values.tolist()] + history_df.values.tolist())
+
+                # Save to local storage too
+                save_to_local('production', record)
+
+                st.success(f"Saved successfully! EntryID: {record['EntryID']}")
+
+            except Exception as e:
+                st.error(f"Error saving to History sheet: {str(e)}")
+
+    # --- Step 4: Show Local Pending Entries ---
     production_data = st.session_state.get('die_casting_production', [])
     if production_data:
         st.subheader("Local Entries (Pending Sync)")
         try:
-            # Convert to list of dictionaries first
-            data_for_df = []
-            for record in production_data:
-                if isinstance(record, dict):
-                    data_for_df.append(record)
-            
+            # Convert to list of dictionaries
+            data_for_df = [r for r in production_data if isinstance(r, dict)]
             if data_for_df:
                 local_df = pd.DataFrame(data_for_df)
-                display_cols = ["User", "Timestamp", "Date", "Machine", "Shift", "Item", "Target_Quantity", "Actual_Quantity", "Good_PCS_Quantity"]
-                available_cols = [col for col in display_cols if col in local_df.columns]
-                if available_cols:
-                    st.dataframe(local_df[available_cols].head(10))
-                else:
-                    st.info("No displayable data available")
+                st.dataframe(local_df.head(10))
             else:
                 st.info("No valid production data available")
         except Exception as e:
             st.error(f"Error displaying data: {str(e)}")
 
-    # Sync button at the bottom
+    # --- Sync Button ---
     if st.button("🔄 Sync with Google Sheets Now"):
         sync_with_google_sheets()
         st.rerun()
+
 
 # ------------------ Quality UI ------------------
 def quality_ui():
@@ -986,3 +988,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
