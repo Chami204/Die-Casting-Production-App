@@ -647,15 +647,37 @@ def production_ui():
     if production_data:
         st.subheader("Local Entries (Pending Sync)")
         try:
-            if production_data:
-                local_df = pd.DataFrame(production_data)
+            # Convert to list of dictionaries first
+            data_for_df = []
+            for record in production_data:
+                if isinstance(record, dict):
+                    data_for_df.append(record)
+            
+            if data_for_df:
+                local_df = pd.DataFrame(data_for_df)
                 
-                # Show all available columns
-                st.dataframe(local_df.head(10))
+                # Check what columns are actually available
+                available_columns = local_df.columns.tolist()
+                st.write(f"Available columns: {available_columns}")  # Debug info
+                
+                # Try to display common columns that might exist
+                display_cols = []
+                for col in ["User", "Timestamp", "Date", "Machine", "Shift", "Item", "Target_Quantity", "Actual_Quantity", "Good_PCS_Quantity"]:
+                    if col in local_df.columns:
+                        display_cols.append(col)
+                
+                if display_cols:
+                    st.dataframe(local_df[display_cols].head(10))
+                else:
+                    # Show all available columns if the preferred ones aren't found
+                    st.dataframe(local_df.head(10))
             else:
-                st.info("No production data available")
+                st.info("No valid production data available")
         except Exception as e:
             st.error(f"Error displaying data: {str(e)}")
+            # Show raw data for debugging
+            st.write("Raw data for debugging:")
+            st.write(production_data)
 
 # ------------------ Quality UI ------------------
 def quality_ui():
@@ -899,6 +921,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
