@@ -236,9 +236,9 @@ def downtime_data_entry(logged_user):
             # Get all non-empty, non-whitespace values under the column
             options = [str(x).strip() for x in df[col].dropna().unique() if str(x).strip() != ""]
             
-            if options:  # If there are valid options → show dropdown
+            if options:  # Dropdown
                 entry[col] = st.selectbox(col, options, key=f"downtime_{col}")
-            else:        # No valid options → show text input
+            else:        # Text input
                 entry[col] = st.text_input(col, key=f"downtime_{col}")
 
         submitted = st.form_submit_button("Save Locally")
@@ -246,16 +246,18 @@ def downtime_data_entry(logged_user):
 
     if submitted:
         save_locally(entry, "downtime_local_data")
-        st.experimental_rerun()
+        st.success("Data saved locally!")  # Show a success message instead of rerun
+
     if sync_button:
         sync_local_data_to_sheet("downtime_local_data", "Downtime_History")
-        st.experimental_rerun()
+        st.experimental_rerun()  # Only rerun after syncing to reset form
 
     # ------------------ LOGOUT BUTTON ------------------
     if st.button("Logout"):
         st.session_state.downtime_logged_in = False
         st.session_state.downtime_logged_user = ""
         st.experimental_rerun()
+
 
 
 
@@ -324,6 +326,7 @@ else:
                 st.experimental_rerun()
             else:
                 st.error("❌ Incorrect password!")
+
 
 
 
