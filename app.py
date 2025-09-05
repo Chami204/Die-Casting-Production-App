@@ -4,11 +4,10 @@ import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 import pytz
-import json
 
 # ------------------ SETTINGS ------------------
 APP_TITLE = "Die Casting Production"
-SHEET_NAME = "FlowApp_Data"  # Replace with actual Google Sheet name
+SHEET_NAME = "FlowApp_Data"  # Replace with your Google Sheet name
 PRODUCTION_CONFIG_SHEET = "Production_Config"
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 SRI_LANKA_TZ = pytz.timezone('Asia/Colombo')
@@ -69,21 +68,22 @@ def read_sheet(sheet, worksheet_name):
 
 # ------------------ LOCAL SAVE ------------------
 def save_locally(data):
-    try:
-        if "local_storage" not in st.session_state:
-            st.session_state.local_storage = []
-        st.session_state.local_storage.append(data)
-        st.success("Data saved locally!")
-    except Exception as e:
-        st.error(f"Failed to save data locally: {str(e)}")
+    if "local_storage" not in st.session_state:
+        st.session_state.local_storage = []
+    st.session_state.local_storage.append(data)
+    st.success("Data saved locally!")
 
-# ------------------ PRODUCTION DATA ENTRY FUNCTION ------------------
+# ------------------ LOAD CONFIG DATA ------------------
+def load_production_config(force_refresh=False):
+    """Load Production Config data. Refresh only when requested."""
+    if "production_config_df" not in st.session_state or force_refresh:
+        sheet = get_gsheet_data(SHEET_NAME)
+        st.session_state.production_config_df = read_sheet(sheet, PRODUCTION_CONFIG_SHEET)
+        st.success("Production Config data refreshed!")
+
+# ------------------ PRODUCTION DATA ENTRY ------------------
 def production_data_entry():
-    """Production Data Entry UI + Logic"""
-
-    # Pull latest Production Config
-    sheet = get_gsheet_data(SHEET_NAME)
-    production_config_df = read_sheet(sheet, PRODUCTION_CONFIG_SHEET)
+    production_config_df = st.session_state.production_config_df
 
     if production_config_df.empty:
         st.error("⚠️ No data found in Production_Config sheet!")
@@ -102,9 +102,7 @@ def production_data_entry():
     # Filter subtopics for selected product
     subtopics_df = production_config_df[production_config_df['Product'] == selected_product]
 
-    production_entry = {}
-    production_entry["Product"] = selected_product
-    production_entry["DateTime"] = now
+    production_entry = {"Product": selected_product, "DateTime": now}
 
     for idx, row in subtopics_df.iterrows():
         if str(row["Dropdown or Not"]).strip().lower() == "yes":
@@ -115,7 +113,6 @@ def production_data_entry():
 
     if st.button("Save Locally"):
         save_locally(production_entry)
-        st.success("✅ Data saved locally!")
 
 # ------------------ MAIN APP ------------------
 st.set_page_config(page_title=APP_TITLE, layout="centered")
@@ -141,11 +138,14 @@ elif choice == "Production Team Login":
         if actual_password and entered_password == actual_password:
             st.success(f"Welcome, {selected_user}!")
 
-            # Refresh Button
-            if st.button("🔄 Refresh Production Config"):
-                st.experimental_rerun()
+            # Load data initially
+            load_production_config()
 
-            # Load Production Entry Section
+            # Manual Refresh Button
+            if st.button("🔄 Refresh Production Config Data"):
+                load_production_config(force_refresh=True)
+
+            # Show production entry form
             production_data_entry()
         else:
             st.error("❌ Incorrect password!")
@@ -157,4 +157,3 @@ elif choice == "Quality Team Login":
 # ------------------ DOWNTIME DATA RECORDINGS ------------------
 elif choice == "Downtime Data Recordings":
     st.header("Downtime Data Recordings (Coming Soon...)")
-
