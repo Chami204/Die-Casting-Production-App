@@ -7,14 +7,15 @@ import pytz
 
 # ------------------ SETTINGS ------------------
 APP_TITLE = "Die Casting Production"
-SHEET_NAME = "FlowApp_Data"  # Replace with your Google Sheet name
+SHEET_NAME = "Your_Google_Sheet_Name"  # Replace with your Google Sheet name
 PRODUCTION_CONFIG_SHEET = "Production_Config"
+HISTORY_SHEET = "History"  # Sheet name where data will be synced
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 SRI_LANKA_TZ = pytz.timezone('Asia/Colombo')
 
 # ------------------ USER CREDENTIALS ------------------
 USER_CREDENTIALS = {
-    "chami": "123",
+    "user1": "pass123",
     "user2": "password",
     "user3": "abc123"
 }
@@ -26,12 +27,12 @@ def get_gs_client():
         if 'gcp_service_account' not in st.secrets:
             st.error("Google Service Account credentials not found in secrets.")
             return None
-            
+
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive",
         ]
-        
+
         creds_dict = {
             "type": st.secrets["gcp_service_account"]["type"],
             "project_id": st.secrets["gcp_service_account"]["project_id"],
@@ -44,12 +45,13 @@ def get_gs_client():
             "auth_provider_x509_cert_url": st.secrets["gcp_service_account"]["auth_provider_x509_cert_url"],
             "client_x509_cert_url": st.secrets["gcp_service_account"]["client_x509_cert_url"]
         }
-        
+
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         return gspread.authorize(creds)
     except Exception as e:
         st.error(f"Failed to authenticate with Google Sheets: {str(e)}")
         return None
+
 
 def get_gsheet_data(sheet_name):
     """Open a Google Sheet."""
@@ -61,6 +63,7 @@ def get_gsheet_data(sheet_name):
             st.error(f"Error opening Google Sheet: {str(e)}")
             return None
     return None
+
 
 def read_sheet(sheet, worksheet_name):
     """Read a specific worksheet into a DataFrame."""
@@ -79,6 +82,46 @@ def save_locally(data):
         st.session_state.local_storage = []
     st.session_state.local_storage.append(data)
     st.success("✅ Data saved locally!")
+
+# ------------------ SYNC DATA TO GOOGLE SHEET ------------------
+def sync_to_google_sheet():
+    """Upload locally saved data to Google Sheet History sheet."""
+    if "local_storage" not in st.session_state or len(st.session_state.local_storage) == 0:
+        st.warning("⚠️ No locally saved data to sync.")
+        return
+
+    sheet = get_gsheet_data(SHEET_NAME)
+    if not sheet:
+        st.error("❌ Cannot connect to Google Sheet.")
+        return
+
+    try:
+        history_ws = sheet.worksheet(HISTORY_SHEET)
+
+        # Convert local data to DataFrame
+        df_local = pd.DataFrame(st.session_state.local_storage)
+
+        # Ensure headers match
+        existing_data = history_ws.get_all_records()
+        if existing_data:
+            start_row = len(existing_data) + 2  # +2 for header row
+        else:
+            # If sheet is empty, set headers first
+            history_ws.update([df_local.columns.tolist()])
+            start_row = 2
+
+        # Prepare data for appending
+        rows_to_add = df_local.values.tolist()
+
+        # Append data
+        history_ws.append_rows(rows_to_add)
+        st.success(f"✅ {len(rows_to_add)} records synced to Google Sheet!")
+
+        # Clear local storage after syncing
+        st.session_state.local_storage = []
+
+    except Exception as e:
+        st.error(f"Error syncing data: {str(e)}")
 
 # ------------------ LOAD CONFIG DATA ------------------
 def load_production_config(force_refresh=False):
@@ -120,7 +163,7 @@ def production_data_entry():
     # Filter subtopics for selected product
     subtopics_df = production_config_df[production_config_df['Product'] == selected_product]
 
-    production_entry = {"Product": selected_product, "DateTime": now}
+    production_entry = {"Product": selected_product, "DateTime": now, "User": st.session_state.get("current_user", "Unknown")}
 
     for idx, row in subtopics_df.iterrows():
         subtopic = row["Subtopic"]
@@ -133,6 +176,10 @@ def production_data_entry():
     # Save button
     if st.button("💾 Save Locally"):
         save_locally(production_entry)
+
+    # Sync to Google Sheet button
+    if st.button("☁️ Sync Data to Google Sheet"):
+        sync_to_google_sheet()
 
 # ------------------ MAIN APP ------------------
 st.set_page_config(page_title=APP_TITLE, layout="centered")
