@@ -140,44 +140,6 @@ def production_data_entry(logged_user):
     if st.button("Save Locally"):
         save_locally(production_entry)
 
-
-# ------------------ QUALITY DATA ENTRY ------------------
-def quality_data_entry(logged_user):
-    quality_config_df = st.session_state.quality_config_df
-
-    if quality_config_df.empty:
-        st.error("⚠️ No data found in Quality_Config sheet!")
-        return
-
-    st.subheader("Please Enter the Quality Data")
-
-    # Product dropdown
-    products = quality_config_df['Product'].unique().tolist()
-    selected_product = st.selectbox("Select Product", products)
-
-    # Show current date/time
-    now = datetime.now(SRI_LANKA_TZ).strftime(TIME_FORMAT)
-    st.write(f"📅 Date & Time: {now}")
-
-    # Filter subtopics for selected product
-    subtopics_df = quality_config_df[quality_config_df['Product'] == selected_product]
-
-    # Initialize production entry with username
-    quality_entry = {"User": logged_user, "Product": selected_product, "DateTime": now}
-
-    for idx, row in subtopics_df.iterrows():
-        if str(row["Dropdown or Not"]).strip().lower() == "yes":
-            options = [opt.strip() for opt in str(row["Dropdown Options"]).split(",")]
-            quality_entry[row["Subtopic"]] = st.selectbox(row["Subtopic"], options, key=f"{logged_user}_{row['Subtopic']}")
-        else:
-            quality_entry[row["Subtopic"]] = st.text_input(row["Subtopic"], key=f"{logged_user}_{row['Subtopic']}")
-
-    if st.button("Save Locally"):
-        save_locally(quality_entry)
-
-
-
-
 # ------------------ SYNC TO GOOGLE SHEET ------------------
 def sync_to_google_sheet():
     """Upload locally saved data to Google Sheet History sheet with dynamic column handling."""
@@ -226,6 +188,90 @@ def sync_to_google_sheet():
 
     except Exception as e:
         st.error(f"Error syncing data: {str(e)}")
+
+
+# ------------------ QUALITY DATA ENTRY ------------------
+def quality_data_entry(logged_user):
+    # Load Quality Config
+    if "quality_config_df" not in st.session_state:
+        st.error("⚠️ Quality_Config not loaded!")
+        return
+
+    quality_config_df = st.session_state.quality_config_df
+
+    if quality_config_df.empty:
+        st.error("⚠️ No data found in Quality_Config sheet!")
+        return
+
+    st.subheader("Please Enter the Quality Data")
+
+    # Product dropdown
+    products = quality_config_df['Product'].unique().tolist()
+    selected_product = st.selectbox("Select Product", products, key="quality_product")
+
+    # Show current date/time
+    now = datetime.now(SRI_LANKA_TZ).strftime(TIME_FORMAT)
+    st.write(f"📅 Date & Time: {now}")
+
+    # Filter subtopics for selected product
+    subtopics_df = quality_config_df[quality_config_df['Product'] == selected_product]
+
+    quality_entry = {"User": logged_user, "Product": selected_product, "DateTime": now}
+
+    for idx, row in subtopics_df.iterrows():
+        if str(row["Dropdown or Not"]).strip().lower() == "yes":
+            options = [opt.strip() for opt in str(row["Dropdown Options"]).split(",")]
+            quality_entry[row["Subtopic"]] = st.selectbox(row["Subtopic"], options, key=f"quality_{row['Subtopic']}")
+        else:
+            quality_entry[row["Subtopic"]] = st.text_input(row["Subtopic"], key=f"quality_{row['Subtopic']}")
+
+    if st.button("Save Quality Data Locally"):
+        if "quality_local_storage" not in st.session_state:
+            st.session_state.quality_local_storage = []
+        st.session_state.quality_local_storage.append(quality_entry)
+        st.success("Quality data saved locally!")
+
+#--------------QUALITY DATA SYNCING------------
+def sync_quality_to_google_sheet():
+    if "quality_local_storage" not in st.session_state or len(st.session_state.quality_local_storage) == 0:
+        st.warning("No local quality data to sync!")
+        return
+
+    sheet = get_gsheet_data(SHEET_NAME)
+    if sheet is None:
+        st.error("Cannot connect to Google Sheet.")
+        return
+
+    try:
+        worksheet_name = "Quality_History"
+        try:
+            worksheet = sheet.worksheet(worksheet_name)
+        except gspread.WorksheetNotFound:
+            worksheet = sheet.add_worksheet(title=worksheet_name, rows="1000", cols="50")
+
+        # Read existing headers
+        existing_data = worksheet.get_all_records()
+        if existing_data:
+            existing_headers = list(existing_data[0].keys())
+        else:
+            existing_headers = []
+
+        for entry in st.session_state.quality_local_storage:
+            # Add new subtopics as new columns if not exist
+            for key in entry.keys():
+                if key not in existing_headers:
+                    existing_headers.append(key)
+            # Prepare row aligned with headers
+            row = [entry.get(h, "") for h in existing_headers]
+            worksheet.append_row(row)
+
+        st.success(f"✅ Synced {len(st.session_state.quality_local_storage)} records to Quality_History.")
+        st.session_state.quality_local_storage = []
+
+    except Exception as e:
+        st.error(f"Error syncing quality data: {str(e)}")
+
+
 
 # ------------------ MAIN APP ------------------
 st.set_page_config(page_title=APP_TITLE, layout="centered")
@@ -299,6 +345,8 @@ elif choice == "Quality Team Login":
         st.session_state.quality_logged_in = False
     if "quality_logged_user" not in st.session_state:
         st.session_state.quality_logged_user = ""
+    if "quality_local_storage" not in st.session_state:
+        st.session_state.quality_local_storage = []
 
     col1, col2 = st.columns([3, 1])
     with col1:
@@ -318,10 +366,25 @@ elif choice == "Quality Team Login":
         else:
             st.error("❌ Incorrect password or empty username!")
 
-    # Show Quality data entry section only if logged in
     if st.session_state.quality_logged_in:
-        st.subheader(f"Welcome {st.session_state.quality_logged_user}, enter your quality data here.")
-        # TODO: Add your quality data entry form here
+        # Load Quality Config if not loaded
+        if "quality_config_df" not in st.session_state:
+            sheet = get_gsheet_data(SHEET_NAME)
+            st.session_state.quality_config_df = read_sheet(sheet, "Quality_Config")
+
+        # Manual Refresh Button
+        if st.button("🔄 Refresh Quality Config Data"):
+            sheet = get_gsheet_data(SHEET_NAME)
+            st.session_state.quality_config_df = read_sheet(sheet, "Quality_Config")
+            st.success("Quality Config refreshed!")
+
+        # Show Quality Data Entry form
+        quality_data_entry(logged_user=st.session_state.quality_logged_user)
+
+        # Sync Button
+        if st.button("📤 Sync Quality Data to Google Sheet"):
+            sync_quality_to_google_sheet()
+
 
 
 # ------------------ DOWNTIME DATA RECORDINGS ------------------
@@ -356,6 +419,7 @@ elif choice == "Downtime Data Recordings":
     if st.session_state.downtime_logged_in:
         st.subheader(f"Welcome {st.session_state.downtime_logged_user}, enter downtime data here.")
         # TODO: Add your downtime data entry form here
+
 
 
 
