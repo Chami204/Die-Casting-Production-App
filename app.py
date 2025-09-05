@@ -171,6 +171,7 @@ def production_data_entry(logged_user):
         sync_local_data_to_sheet("prod_local_data", "Production_History")
         st.experimental_rerun()
 
+        # ------------------ LOGOUT BUTTON ------------------
     if st.button("Logout"):
         st.session_state.prod_logged_in = False
         st.session_state.logged_user = ""
@@ -209,9 +210,10 @@ def quality_data_entry(logged_user):
         sync_local_data_to_sheet("qual_local_data", "Quality_History")
         st.experimental_rerun()
 
+        # ------------------ LOGOUT BUTTON ------------------
     if st.button("Logout"):
-        st.session_state.qual_logged_in = False
-        st.session_state.qual_logged_user = ""
+        st.session_state.prod_logged_in = False
+        st.session_state.logged_user = ""
         st.experimental_rerun()
 
 def downtime_data_entry(logged_user):
@@ -247,9 +249,10 @@ def downtime_data_entry(logged_user):
         sync_local_data_to_sheet("downtime_local_data", "Downtime_History")
         st.experimental_rerun()
 
+        # ------------------ LOGOUT BUTTON ------------------
     if st.button("Logout"):
-        st.session_state.downtime_logged_in = False
-        st.session_state.downtime_logged_user = ""
+        st.session_state.prod_logged_in = False
+        st.session_state.logged_user = ""
         st.experimental_rerun()
 
 # ------------------ LOAD CONFIG SHEETS ------------------
@@ -317,4 +320,5 @@ else:
                 st.experimental_rerun()
             else:
                 st.error("❌ Incorrect password!")
+
 
