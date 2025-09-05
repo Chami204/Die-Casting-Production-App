@@ -21,8 +21,8 @@ USER_CREDENTIALS = {
     "user3": "1234"
 }
 
-QUALITY_SHARED_PASSWORD = "123"
-DOWNTIME_SHARED_PASSWORD = "1234"
+QUALITY_SHARED_PASSWORD = "12"
+DOWNTIME_SHARED_PASSWORD = "123"
 
 # ------------------ GOOGLE SHEET CONNECTION ------------------
 def get_gs_client():
@@ -35,7 +35,7 @@ def get_gs_client():
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive",
         ]
-        
+
         creds_dict = {
             "type": st.secrets["gcp_service_account"]["type"],
             "project_id": st.secrets["gcp_service_account"]["project_id"],
@@ -104,7 +104,9 @@ def sync_local_data_to_sheet(local_key, history_sheet_name):
         existing_df = pd.DataFrame(worksheet.get_all_records())
         combined_df = pd.concat([existing_df, df_local], ignore_index=True)
 
-        # Update worksheet
+        # Remove NaN and ensure JSON compliance
+        combined_df = combined_df.fillna("")
+
         worksheet.clear()
         worksheet.update([combined_df.columns.values.tolist()] + combined_df.values.tolist())
         st.success(f"✅ {history_sheet_name} synced successfully!")
@@ -165,9 +167,8 @@ def data_entry(section, config_df, logged_user, local_key, history_sheet_name, i
         if st.button(f"📤 Sync to Google Sheet ({section})"):
             sync_local_data_to_sheet(local_key, history_sheet_name)
     with col3:
-        # Logout button
         if st.button(f"🔓 Logout ({section})"):
-            # Reset the login flags
+            # Reset login flags
             if section.lower() == "production":
                 st.session_state.prod_logged_in = False
                 st.session_state.logged_user = ""
@@ -177,11 +178,8 @@ def data_entry(section, config_df, logged_user, local_key, history_sheet_name, i
             elif section.lower() == "downtime":
                 st.session_state.downtime_logged_in = False
                 st.session_state.downtime_logged_user = ""
-            
-            # Just return from function instead of calling rerun
             st.info("You have been logged out.")
             return
-
 
 # ------------------ SYNC ALL LOCAL DATA ------------------
 def sync_all_local_data():
@@ -232,12 +230,14 @@ elif choice == "Production Team Login":
                 st.session_state.prod_logged_in = True
                 st.session_state.logged_user = selected_user
                 st.success(f"Welcome, {selected_user}!")
-                st.experimental_rerun()
             else:
                 st.error("❌ Incorrect password!")
     else:
         config_df = load_config(SHEET_NAME, PRODUCTION_CONFIG_SHEET)
-        data_entry("Production", config_df, st.session_state.logged_user, "prod_local_data", "Production_History")
+        # Manual refresh
+        if st.button("🔄 Refresh Production Config Data"):
+            config_df = load_config(SHEET_NAME, PRODUCTION_CONFIG_SHEET, force_refresh=True)
+        data_entry("Production", config_df, st.session_state.logged_user, "prod_local_data", "Production_History", include_product=True)
 
 # ------------------ QUALITY TEAM LOGIN ------------------
 elif choice == "Quality Team Login":
@@ -246,19 +246,20 @@ elif choice == "Quality Team Login":
         st.session_state.qual_logged_user = ""
 
     if not st.session_state.qual_logged_in:
-        entered_user = st.text_input("Enter Your Name")
-        entered_pass = st.text_input("Enter Password", type="password")
+        entered_user = st.text_input("Enter Username")
+        entered_password = st.text_input("Enter Password", type="password")
         if st.button("Login"):
-            if entered_pass == QUALITY_SHARED_PASSWORD:
+            if entered_password == QUALITY_SHARED_PASSWORD and entered_user.strip():
                 st.session_state.qual_logged_in = True
-                st.session_state.qual_logged_user = entered_user
-                st.success(f"Welcome, {entered_user}!")
-                st.experimental_rerun()
+                st.session_state.qual_logged_user = entered_user.strip()
+                st.success(f"Welcome, {entered_user.strip()}!")
             else:
                 st.error("❌ Incorrect password!")
     else:
         config_df = load_config(SHEET_NAME, QUALITY_CONFIG_SHEET)
-        data_entry("Quality", config_df, st.session_state.qual_logged_user, "qual_local_data", "Quality_History")
+        if st.button("🔄 Refresh Quality Config Data"):
+            config_df = load_config(SHEET_NAME, QUALITY_CONFIG_SHEET, force_refresh=True)
+        data_entry("Quality", config_df, st.session_state.qual_logged_user, "qual_local_data", "Quality_History", include_product=True)
 
 # ------------------ DOWNTIME DATA RECORDINGS ------------------
 elif choice == "Downtime Data Recordings":
@@ -267,25 +268,23 @@ elif choice == "Downtime Data Recordings":
         st.session_state.downtime_logged_user = ""
 
     if not st.session_state.downtime_logged_in:
-        entered_user = st.text_input("Enter Your Name")
-        entered_pass = st.text_input("Enter Password", type="password")
+        entered_user = st.text_input("Enter Username")
+        entered_password = st.text_input("Enter Password", type="password")
         if st.button("Login"):
-            if entered_pass == DOWNTIME_SHARED_PASSWORD:
+            if entered_password == DOWNTIME_SHARED_PASSWORD and entered_user.strip():
                 st.session_state.downtime_logged_in = True
-                st.session_state.downtime_logged_user = entered_user
-                st.success(f"Welcome, {entered_user}!")
-                st.experimental_rerun()
+                st.session_state.downtime_logged_user = entered_user.strip()
+                st.success(f"Welcome, {entered_user.strip()}!")
             else:
                 st.error("❌ Incorrect password!")
     else:
-        # Downtime uses Product from Production_Config
-        prod_config_df = load_config(SHEET_NAME, PRODUCTION_CONFIG_SHEET)
+        # Load downtime config and production products for "Planned Item"
         downtime_config_df = load_config(SHEET_NAME, DOWNTIME_CONFIG_SHEET)
-        if not prod_config_df.empty:
-            # Add Planned Item column
-            downtime_config_df["Product"] = st.selectbox("Select Planned Item", prod_config_df["Product"].unique())
+        prod_config_df = load_config(SHEET_NAME, PRODUCTION_CONFIG_SHEET)
+        # Create a temporary column 'Product' from Production_Config
+        if not downtime_config_df.empty and not prod_config_df.empty:
+            downtime_config_df = downtime_config_df.copy()
+            downtime_config_df["Product"] = st.selectbox("Select Planned Item", prod_config_df['Product'].unique())
+        if st.button("🔄 Refresh Downtime Config Data"):
+            downtime_config_df = load_config(SHEET_NAME, DOWNTIME_CONFIG_SHEET, force_refresh=True)
         data_entry("Downtime", downtime_config_df, st.session_state.downtime_logged_user, "downtime_local_data", "Downtime_History", include_product=False)
-
-
-
-
