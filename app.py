@@ -164,15 +164,17 @@ def production_data_entry(logged_user):
 
     if submitted:
         save_locally(entry, "prod_local_data")
-
-    if sync_button:
-        sync_local_data_to_sheet("prod_local_data", "Production_History")
-        st.experimental_rerun()
-
     if st.button("Logout"):
         st.session_state.prod_logged_in = False
         st.session_state.logged_user = ""
         st.experimental_rerun()
+
+    
+    if sync_button:
+        sync_local_data_to_sheet("prod_local_data", "Production_History")
+        st.experimental_rerun()
+
+
 
 def quality_data_entry(logged_user):
     df = st.session_state.quality_config_df
@@ -202,14 +204,13 @@ def quality_data_entry(logged_user):
 
     if submitted:
         save_locally(entry, "qual_local_data")
-
-    if sync_button:
-        sync_local_data_to_sheet("qual_local_data", "Quality_History")
-        st.experimental_rerun()
-
     if st.button("Logout"):
         st.session_state.qual_logged_in = False
         st.session_state.qual_logged_user = ""
+        st.experimental_rerun()
+
+    if sync_button:
+        sync_local_data_to_sheet("qual_local_data", "Quality_History")
         st.experimental_rerun()
 
 def downtime_data_entry(logged_user):
@@ -240,16 +241,15 @@ def downtime_data_entry(logged_user):
 
     if submitted:
         save_locally(entry, "downtime_local_data")
-
-    if sync_button:
-        sync_local_data_to_sheet("downtime_local_data", "Downtime_History")
-        st.experimental_rerun()
-
     if st.button("Logout"):
         st.session_state.downtime_logged_in = False
         st.session_state.downtime_logged_user = ""
         st.experimental_rerun()
+    if sync_button:
+        sync_local_data_to_sheet("downtime_local_data", "Downtime_History")
+        st.experimental_rerun()
 
+    
 # ------------------ LOAD CONFIG SHEETS ------------------
 sheet = get_gsheet_data(SHEET_NAME)
 if sheet:
@@ -315,3 +315,4 @@ else:
                 st.experimental_rerun()
             else:
                 st.error("❌ Incorrect password!")
+
