@@ -8,17 +8,31 @@ import pytz
 # ------------------ SETTINGS ------------------
 APP_TITLE = "Die Casting Production"
 SHEET_NAME = "FlowApp_Data"  # Replace with your Google Sheet name
+
 PRODUCTION_CONFIG_SHEET = "Production_Config"
 HISTORY_SHEET = "History"
+QUALITY_CONFIG_SHEET = "Quality_Config"
+QUALITY_HISTORY_SHEET = "Quality_History"
+
+
+
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 SRI_LANKA_TZ = pytz.timezone('Asia/Colombo')
 
-# ------------------ USER CREDENTIALS ------------------
+# ------------------ PRODUCTION USER CREDENTIALS ------------------
 USER_CREDENTIALS = {
     "chami": "123",
     "user2": "password",
     "user3": "abc123"
 }
+
+# ------------------ QUALITY USER CREDENTIALS ------------------
+QUALITY_SHARED_PASSWORD = "quality123"
+
+# ------------------ DOWNTIME USER CREDENTIALS ------------------
+DOWNTIME_SHARED_PASSWORD = "downtime123"
+
+
 
 # ------------------ GOOGLE SHEET CONNECTION ------------------
 def get_gs_client():
@@ -75,12 +89,22 @@ def save_locally(data):
     st.success("Data saved locally!")
 
 # ------------------ LOAD CONFIG DATA ------------------
+#----------------------PRODUCTION-----------------------
 def load_production_config(force_refresh=False):
     """Load Production Config data. Refresh only when requested."""
     if "production_config_df" not in st.session_state or force_refresh:
         sheet = get_gsheet_data(SHEET_NAME)
         st.session_state.production_config_df = read_sheet(sheet, PRODUCTION_CONFIG_SHEET)
         st.success("Production Config data refreshed!")
+
+#----------------------QUALITY-----------------------
+def load_quality_config(force_refresh=False):
+    """Load quality Config data. Refresh only when requested."""
+    if "quality_config_df" not in st.session_state or force_refresh:
+        sheet = get_gsheet_data(SHEET_NAME)
+        st.session_state.quality_config_df = read_sheet(sheet, QUALITY_CONFIG_SHEET)
+        st.success("Quality Config data refreshed!")
+
 
 # ------------------ PRODUCTION DATA ENTRY ------------------
 def production_data_entry(logged_user):
@@ -115,6 +139,44 @@ def production_data_entry(logged_user):
 
     if st.button("Save Locally"):
         save_locally(production_entry)
+
+
+# ------------------ QUALITY DATA ENTRY ------------------
+def quality_data_entry(logged_user):
+    quality_config_df = st.session_state.quality_config_df
+
+    if quality_config_df.empty:
+        st.error("⚠️ No data found in Quality_Config sheet!")
+        return
+
+    st.subheader("Please Enter the Quality Data")
+
+    # Product dropdown
+    products = quality_config_df['Product'].unique().tolist()
+    selected_product = st.selectbox("Select Product", products)
+
+    # Show current date/time
+    now = datetime.now(SRI_LANKA_TZ).strftime(TIME_FORMAT)
+    st.write(f"📅 Date & Time: {now}")
+
+    # Filter subtopics for selected product
+    subtopics_df = quality_config_df[quality_config_df['Product'] == selected_product]
+
+    # Initialize production entry with username
+    production_entry = {"User": logged_user, "Product": selected_product, "DateTime": now}
+
+    for idx, row in subtopics_df.iterrows():
+        if str(row["Dropdown or Not"]).strip().lower() == "yes":
+            options = [opt.strip() for opt in str(row["Dropdown Options"]).split(",")]
+            production_entry[row["Subtopic"]] = st.selectbox(row["Subtopic"], options, key=f"{logged_user}_{row['Subtopic']}")
+        else:
+            production_entry[row["Subtopic"]] = st.text_input(row["Subtopic"], key=f"{logged_user}_{row['Subtopic']}")
+
+    if st.button("Save Locally"):
+        save_locally(production_entry)
+
+
+
 
 # ------------------ SYNC TO GOOGLE SHEET ------------------
 def sync_to_google_sheet():
@@ -177,7 +239,6 @@ if choice == "Home":
     st.markdown("<h4 style='text-align: center;'>Please select a section to continue</h4>", unsafe_allow_html=True)
 
 # ------------------ PRODUCTION TEAM LOGIN ------------------
-# ------------------ PRODUCTION TEAM LOGIN ------------------
 elif choice == "Production Team Login":
     st.header("🔑 Production Team Login")
 
@@ -231,9 +292,70 @@ elif choice == "Production Team Login":
 
 # ------------------ QUALITY TEAM LOGIN ------------------
 elif choice == "Quality Team Login":
-    st.header("Quality Team Login (Coming Soon...)")
+    st.header("🔑 Quality Team Login")
+
+    # Initialize session state
+    if "quality_logged_in" not in st.session_state:
+        st.session_state.quality_logged_in = False
+    if "quality_logged_user" not in st.session_state:
+        st.session_state.quality_logged_user = ""
+
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        entered_user = st.text_input("Enter your Name", key="quality_username")
+        entered_password = st.text_input("Enter Password", type="password", key="quality_password")
+    with col2:
+        if st.button("Logout", key="quality_logout"):
+            st.session_state.quality_logged_in = False
+            st.session_state.quality_logged_user = ""
+            st.success("✅ Logged out successfully!")
+
+    if st.button("Login", key="quality_login"):
+        if entered_password == QUALITY_SHARED_PASSWORD and entered_user.strip() != "":
+            st.session_state.quality_logged_in = True
+            st.session_state.quality_logged_user = entered_user.strip()
+            st.success(f"Welcome, {entered_user.strip()}!")
+        else:
+            st.error("❌ Incorrect password or empty username!")
+
+    # Show Quality data entry section only if logged in
+    if st.session_state.quality_logged_in:
+        st.subheader(f"Welcome {st.session_state.quality_logged_user}, enter your quality data here.")
+        # TODO: Add your quality data entry form here
+
 
 # ------------------ DOWNTIME DATA RECORDINGS ------------------
 elif choice == "Downtime Data Recordings":
-    st.header("Downtime Data Recordings (Coming Soon...)")
+    st.header("🔑 Downtime Data Recordings Login")
+
+    # Initialize session state
+    if "downtime_logged_in" not in st.session_state:
+        st.session_state.downtime_logged_in = False
+    if "downtime_logged_user" not in st.session_state:
+        st.session_state.downtime_logged_user = ""
+
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        entered_user = st.text_input("Enter your Name", key="downtime_username")
+        entered_password = st.text_input("Enter Password", type="password", key="downtime_password")
+    with col2:
+        if st.button("Logout", key="downtime_logout"):
+            st.session_state.downtime_logged_in = False
+            st.session_state.downtime_logged_user = ""
+            st.success("✅ Logged out successfully!")
+
+    if st.button("Login", key="downtime_login"):
+        if entered_password == DOWNTIME_SHARED_PASSWORD and entered_user.strip() != "":
+            st.session_state.downtime_logged_in = True
+            st.session_state.downtime_logged_user = entered_user.strip()
+            st.success(f"Welcome, {entered_user.strip()}!")
+        else:
+            st.error("❌ Incorrect password or empty username!")
+
+    # Show downtime data entry section only if logged in
+    if st.session_state.downtime_logged_in:
+        st.subheader(f"Welcome {st.session_state.downtime_logged_user}, enter downtime data here.")
+        # TODO: Add your downtime data entry form here
+
+
 
