@@ -231,8 +231,19 @@ def downtime_data_entry(logged_user):
 st.set_page_config(page_title=APP_TITLE, layout="centered")
 st.title(APP_TITLE)
 
-menu = ["Home", "Production Team Login", "Quality Team Login", "Downtime Data Recordings"]
-choice = st.sidebar.selectbox("Menu", menu)
+# Initialize session state variables if they don't exist
+if "prod_logged_in" not in st.session_state:
+    st.session_state.prod_logged_in = False
+if "qual_logged_in" not in st.session_state:
+    st.session_state.qual_logged_in = False
+if "downtime_logged_in" not in st.session_state:
+    st.session_state.downtime_logged_in = False
+if "logged_user" not in st.session_state:
+    st.session_state.logged_user = ""
+if "qual_logged_user" not in st.session_state:
+    st.session_state.qual_logged_user = ""
+if "downtime_logged_user" not in st.session_state:
+    st.session_state.downtime_logged_user = ""
 
 sheet = get_gsheet_data(SHEET_NAME)
 if sheet:
@@ -243,55 +254,66 @@ if sheet:
     if "downtime_config_df" not in st.session_state:
         st.session_state.downtime_config_df = read_sheet(sheet, DOWNTIME_CONFIG_SHEET)
 
-# ------------------ HOME ------------------
-if choice == "Home":
-    st.markdown("<h2 style='text-align: center;'>Welcome to Die Casting Production App</h2>", unsafe_allow_html=True)
-    st.markdown("<h4 style='text-align: center;'>Please select a section to continue</h4>", unsafe_allow_html=True)
+# Check if user is logged in to any section and show appropriate content
+if st.session_state.prod_logged_in:
+    production_data_entry(st.session_state.logged_user)
+elif st.session_state.qual_logged_in:
+    quality_data_entry(st.session_state.qual_logged_user)
+elif st.session_state.downtime_logged_in:
+    downtime_data_entry(st.session_state.downtime_logged_user)
+else:
+    # Only show the menu if no one is logged in
+    menu = ["Home", "Production Team Login", "Quality Team Login", "Downtime Data Recordings"]
+    choice = st.sidebar.selectbox("Menu", menu)
 
-# ------------------ PRODUCTION TEAM LOGIN ------------------
-elif choice == "Production Team Login":
-    st.header("🔑 Production Team Login")
-    usernames = list(USER_CREDENTIALS.keys())
-    selected_user = st.selectbox("Select Username", usernames)
-    entered_password = st.text_input("Enter Password", type="password")
+    # ------------------ HOME ------------------
+    if choice == "Home":
+        st.markdown("<h2 style='text-align: center;'>Welcome to Die Casting Production App</h2>", unsafe_allow_html=True)
+        st.markdown("<h4 style='text-align: center;'>Please select a section to continue</h4>", unsafe_allow_html=True)
 
-    if st.button("Login"):
-        actual_password = USER_CREDENTIALS.get(selected_user)
-        if actual_password and entered_password == actual_password:
-            st.session_state.prod_logged_in = True
-            st.session_state.logged_user = selected_user
-            st.success(f"Welcome, {selected_user}!")
-            production_data_entry(logged_user=selected_user)
-        else:
-            st.error("❌ Incorrect password!")
+    # ------------------ PRODUCTION TEAM LOGIN ------------------
+    elif choice == "Production Team Login":
+        st.header("🔑 Production Team Login")
+        usernames = list(USER_CREDENTIALS.keys())
+        selected_user = st.selectbox("Select Username", usernames)
+        entered_password = st.text_input("Enter Password", type="password")
 
-# ------------------ QUALITY TEAM LOGIN ------------------
-elif choice == "Quality Team Login":
-    st.header("🔑 Quality Team Login")
-    entered_user = st.text_input("Enter Your Name")
-    entered_pass = st.text_input("Enter Password", type="password")
+        if st.button("Login"):
+            actual_password = USER_CREDENTIALS.get(selected_user)
+            if actual_password and entered_password == actual_password:
+                st.session_state.prod_logged_in = True
+                st.session_state.logged_user = selected_user
+                st.success(f"Welcome, {selected_user}!")
+                st.experimental_rerun()
+            else:
+                st.error("❌ Incorrect password!")
 
-    if st.button("Login"):
-        if entered_pass == QUALITY_SHARED_PASSWORD:
-            st.session_state.qual_logged_in = True
-            st.session_state.qual_logged_user = entered_user
-            st.success(f"Welcome, {entered_user}!")
-            quality_data_entry(logged_user=entered_user)
-        else:
-            st.error("❌ Incorrect password!")
+    # ------------------ QUALITY TEAM LOGIN ------------------
+    elif choice == "Quality Team Login":
+        st.header("🔑 Quality Team Login")
+        entered_user = st.text_input("Enter Your Name")
+        entered_pass = st.text_input("Enter Password", type="password")
 
-# ------------------ DOWNTIME DATA RECORDINGS ------------------
-elif choice == "Downtime Data Recordings":
-    st.header("🔑 Downtime Team Login")
-    entered_user = st.text_input("Enter Your Name")
-    entered_pass = st.text_input("Enter Password", type="password")
+        if st.button("Login"):
+            if entered_pass == QUALITY_SHARED_PASSWORD:
+                st.session_state.qual_logged_in = True
+                st.session_state.qual_logged_user = entered_user
+                st.success(f"Welcome, {entered_user}!")
+                st.experimental_rerun()
+            else:
+                st.error("❌ Incorrect password!")
 
-    if st.button("Login"):
-        if entered_pass == DOWNTIME_SHARED_PASSWORD:
-            st.session_state.downtime_logged_in = True
-            st.session_state.downtime_logged_user = entered_user
-            st.success(f"Welcome, {entered_user}!")
-            downtime_data_entry(logged_user=entered_user)
-        else:
-            st.error("❌ Incorrect password!")
+    # ------------------ DOWNTIME DATA RECORDINGS ------------------
+    elif choice == "Downtime Data Recordings":
+        st.header("🔑 Downtime Team Login")
+        entered_user = st.text_input("Enter Your Name")
+        entered_pass = st.text_input("Enter Password", type="password")
 
+        if st.button("Login"):
+            if entered_pass == DOWNTIME_SHARED_PASSWORD:
+                st.session_state.downtime_logged_in = True
+                st.session_state.downtime_logged_user = entered_user
+                st.success(f"Welcome, {entered_user}!")
+                st.experimental_rerun()
+            else:
+                st.error("❌ Incorrect password!")
