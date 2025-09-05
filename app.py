@@ -131,30 +131,39 @@ def data_entry(section, config_df, logged_user, local_key, history_sheet_name, i
         return
 
     st.subheader(f"Please Enter the {section} Data")
+    
+    # For Downtime, include_product=False, we add Planned Item manually
     if include_product:
         products = config_df['Product'].unique().tolist()
         selected_product = st.selectbox("Select Product", products)
     else:
-        selected_product = None
+        planned_items = st.session_state.get("prod_config_df", pd.DataFrame())
+        if not planned_items.empty:
+            selected_product = st.selectbox("Select Planned Item", planned_items['Product'].unique())
+        else:
+            st.error("⚠️ Production_Config not loaded! Cannot select Planned Item.")
+            return
 
     now = datetime.now(SRI_LANKA_TZ).strftime(TIME_FORMAT)
     st.write(f"📅 Date & Time: {now}")
 
-    if include_product:
-        subtopics_df = config_df[config_df['Product'] == selected_product]
-    else:
-        subtopics_df = config_df
-
+    # Create entry dictionary
     entry = {"User": logged_user}
-    if include_product:
-        entry["Product"] = selected_product
+    if include_product or section.lower() == "downtime":
+        entry["Planned Item"] = selected_product
     entry["DateTime"] = now
 
-    for idx, row in subtopics_df.iterrows():
-        col_name = row["Subtopic"]
-        if str(row.get("Dropdown or Not", "no")).strip().lower() == "yes":
-            options = [opt.strip() for opt in str(row.get("Dropdown Options", "")).split(",")]
-            entry[col_name] = st.selectbox(col_name, options, key=f"{section}_{col_name}")
+    # Determine columns to use for data entry
+    if section.lower() == "downtime":
+        subtopic_columns = config_df.columns.tolist()  # all columns
+    else:
+        subtopic_columns = config_df["Subtopic"].tolist()
+
+    for col_name in subtopic_columns:
+        # Check if column has dropdown options
+        if section.lower() != "downtime" and str(config_df.loc[config_df['Subtopic'] == col_name, "Dropdown or Not"].values[0]).strip().lower() == "yes":
+            options = str(config_df.loc[config_df['Subtopic'] == col_name, "Dropdown Options"].values[0]).split(",")
+            entry[col_name] = st.selectbox(col_name, [opt.strip() for opt in options], key=f"{section}_{col_name}")
         else:
             entry[col_name] = st.text_input(col_name, key=f"{section}_{col_name}")
 
@@ -180,6 +189,7 @@ def data_entry(section, config_df, logged_user, local_key, history_sheet_name, i
                 st.session_state.downtime_logged_user = ""
             st.info("You have been logged out.")
             return
+
 
 # ------------------ SYNC ALL LOCAL DATA ------------------
 def sync_all_local_data():
@@ -288,3 +298,4 @@ elif choice == "Downtime Data Recordings":
         if st.button("🔄 Refresh Downtime Config Data"):
             downtime_config_df = load_config(SHEET_NAME, DOWNTIME_CONFIG_SHEET, force_refresh=True)
         data_entry("Downtime", downtime_config_df, st.session_state.downtime_logged_user, "downtime_local_data", "Downtime_History", include_product=False)
+
