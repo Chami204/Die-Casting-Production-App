@@ -233,8 +233,9 @@ def downtime_data_entry(logged_user):
 
     with st.form(key="downtime_entry_form"):
         for col in df.columns:
-            if str(df[col].iloc[0]).strip().lower() == "yes":
-                options = [opt.strip() for opt in str(df[col].iloc[1]).split(",")]
+            # Collect all non-empty values under the column
+            options = df[col].dropna().unique().tolist()
+            if options:
                 entry[col] = st.selectbox(col, options, key=f"downtime_{col}")
             else:
                 entry[col] = st.text_input(col, key=f"downtime_{col}")
@@ -249,11 +250,12 @@ def downtime_data_entry(logged_user):
         sync_local_data_to_sheet("downtime_local_data", "Downtime_History")
         st.experimental_rerun()
 
-        # ------------------ LOGOUT BUTTON ------------------
+    # ------------------ LOGOUT BUTTON ------------------
     if st.button("Logout"):
         st.session_state.downtime_logged_in = False
         st.session_state.downtime_logged_user = ""
         st.experimental_rerun()
+
 
 # ------------------ LOAD CONFIG SHEETS ------------------
 sheet = get_gsheet_data(SHEET_NAME)
@@ -320,6 +322,7 @@ else:
                 st.experimental_rerun()
             else:
                 st.error("❌ Incorrect password!")
+
 
 
 
