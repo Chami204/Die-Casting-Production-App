@@ -249,27 +249,43 @@ def sync_quality_to_google_sheet():
         except gspread.WorksheetNotFound:
             worksheet = sheet.add_worksheet(title=worksheet_name, rows="1000", cols="50")
 
-        # Read existing headers
+        # Get existing data
         existing_data = worksheet.get_all_records()
         if existing_data:
             existing_headers = list(existing_data[0].keys())
         else:
             existing_headers = []
 
+        # Collect all keys from local storage
+        all_keys = set(existing_headers)
         for entry in st.session_state.quality_local_storage:
-            # Add new subtopics as new columns if not exist
-            for key in entry.keys():
-                if key not in existing_headers:
-                    existing_headers.append(key)
-            # Prepare row aligned with headers
-            row = [entry.get(h, "") for h in existing_headers]
+            all_keys.update(entry.keys())
+        all_keys = list(all_keys)  # preserve order
+
+        # Update worksheet header row if new keys are added
+        worksheet_values = worksheet.get_all_values()
+        if worksheet_values:
+            worksheet_header = worksheet_values[0]
+            # Add missing headers at the end
+            for key in all_keys:
+                if key not in worksheet_header:
+                    worksheet.update_cell(1, len(worksheet_header) + 1, key)
+                    worksheet_header.append(key)
+        else:
+            # If sheet is empty, set header row
+            worksheet.append_row(all_keys)
+
+        # Append each local entry aligned with all_keys
+        for entry in st.session_state.quality_local_storage:
+            row = [entry.get(key, "") for key in all_keys]
             worksheet.append_row(row)
 
-        st.success(f"✅ Synced {len(st.session_state.quality_local_storage)} records to Quality_History.")
+        st.success(f"✅ Synced {len(st.session_state.quality_local_storage)} quality records to Google Sheet.")
         st.session_state.quality_local_storage = []
 
     except Exception as e:
         st.error(f"Error syncing quality data: {str(e)}")
+
 
 
 
@@ -419,6 +435,7 @@ elif choice == "Downtime Data Recordings":
     if st.session_state.downtime_logged_in:
         st.subheader(f"Welcome {st.session_state.downtime_logged_user}, enter downtime data here.")
         # TODO: Add your downtime data entry form here
+
 
 
 
