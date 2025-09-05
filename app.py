@@ -464,7 +464,7 @@ def login_system():
             st.session_state.logged_in = False
             st.session_state.current_user = None
             st.session_state.user_role = ""
-            st.experimental_rerun()
+            st.rerun()
         return True
     
     users = {}
@@ -500,7 +500,7 @@ def login_system():
                 st.session_state.current_user = username
                 st.session_state.user_role = users[username].get("role", "Production")
                 st.sidebar.success("Login successful!")
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.sidebar.error("Invalid username or password")
     else:
@@ -513,7 +513,7 @@ def login_system():
                 st.session_state.current_user = username
                 st.session_state.user_role = "Production"
                 st.sidebar.success("Login successful!")
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.sidebar.error("Please enter username and password")
     
@@ -527,7 +527,7 @@ def login_system():
             st.session_state.current_user = downtime_username
             st.session_state.user_role = "Downtime"
             st.sidebar.success("Downtime login successful!")
-            st.experimental_rerun()
+            st.rerun()
         else:
             st.sidebar.error("Invalid downtime credentials")
     
@@ -541,7 +541,7 @@ def login_system():
             st.session_state.current_user = quality_username
             st.session_state.user_role = "Quality"
             st.sidebar.success("Quality login successful!")
-            st.experimental_rerun()
+            st.rerun()
         else:
             st.sidebar.error("Invalid quality credentials")
             
@@ -576,7 +576,7 @@ def admin_ui():
             st.success("Configuration refreshed from Google Sheets!")
         else:
             st.warning("Could not connect to Google Sheets")
-        st.experimental_rerun()
+        st.rerun()
 
 # ------------------ Production UI ------------------
 def production_ui():
@@ -592,7 +592,7 @@ def production_ui():
                 st.success("Data refreshed from Google Sheets!")
             else:
                 st.warning("Using local data cache")
-            st.experimental_rerun()
+            st.rerun()
     
     refresh_config_if_needed()
     
@@ -716,7 +716,7 @@ def production_ui():
 
     if st.button("🔄 Sync with Google Sheets Now"):
         sync_with_google_sheets()
-        st.experimental_rerun()
+        st.rerun()
 
 
 # ------------------ Quality UI ------------------
@@ -733,7 +733,7 @@ def quality_ui():
                 st.success("Products refreshed from Google Sheets!")
             else:
                 st.warning("Using local product cache")
-            st.experimental_rerun()
+            st.rerun()
     
     refresh_config_if_needed()
     
@@ -784,7 +784,7 @@ def quality_ui():
             }
             save_to_local('quality', record)
             st.success(f"Quality data saved locally! Entry ID: {entry_id}")
-            st.experimental_rerun()
+            st.rerun()
         except Exception as e:
             st.error(f"Error saving quality data: {str(e)}")
 
@@ -826,7 +826,7 @@ def downtime_ui():
                 st.success("Data refreshed from Google Sheets!")
             else:
                 st.warning("Using local data cache")
-            st.experimental_rerun()
+            st.rerun()
     
     refresh_config_if_needed()
     
@@ -879,7 +879,7 @@ def downtime_ui():
 
     if st.button("🔄 Sync Downtime Data Now"):
         sync_with_google_sheets()
-        st.experimental_rerun()
+        st.rerun()
 
     # Corrected display block for downtime data:
     downtime_data = st.session_state.get('die_casting_downtime', [])
@@ -912,7 +912,7 @@ def main():
         st.warning("⚠️ Data pending sync with Google Sheets")
         if st.button("🔄 Try to Sync Now"):
             sync_with_google_sheets()
-            st.experimental_rerun()
+            st.rerun()
 
     try:
         if not st.session_state.cfg:
@@ -938,3 +938,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
