@@ -655,7 +655,7 @@ def production_ui():
     downtime_config = read_downtime_config()
     machines = downtime_config["machines"]
     
-    # Read production configuration directly from sheet (for dynamic subtopics)
+    # Load production configuration for dynamic subtopics
     config_df = pd.DataFrame()
     try:
         if initialize_google_sheets():
@@ -667,61 +667,47 @@ def production_ui():
                 config_values = ws_config.get_all_records()
                 config_df = pd.DataFrame(config_values)
             except Exception:
-                # If sheet not available or malformed, fall back to local cfg
                 config_df = pd.DataFrame()
     except Exception:
         config_df = pd.DataFrame()
     
-    # Determine available items (Item Name) either from config_df or from st.session_state.cfg fallback
-    if not config_df.empty and "Item Name" in config_df.columns:
-        available_items = list(config_df["Item Name"].dropna().unique())
+    # Determine available items
+    if not config_df.empty and "Product" in config_df.columns:
+        available_items = list(config_df["Product"].dropna().unique())
     else:
-        # fallback to keys of cfg for compatibility with older config
-        available_items = list(st.session_state.cfg.keys())
+        available_items = list(st.session_state.cfg.keys()) if 'cfg' in st.session_state else []
     
     if not available_items:
         st.info("No products available yet.")
         return
 
     st.write("Fill **all fields** below:")
-    
+
     col1, col2 = st.columns(2)
     
-    # Prepare current time/date
+    # Current time/date
     sri_time = get_sri_lanka_time()
     sri_date = sri_time.split(" ")[0]
     
+    # Column 1 - standard fields
     with col1:
-        # If config provides a "Date" subtopic automatically, we will handle it dynamically below.
-        # But keep a legacy Date field to match original layout if needed.
         date_value = st.text_input("Date", value=sri_date, key="date_field")
-        
-        # Machine dropdown (from downtime config) - this is still useful as a general fallback
         machine_value = st.selectbox("Machine", options=machines, key="machine_field")
-        
-        # Shift dropdown
         shift_value = st.selectbox("Shift", options=["Day", "Night"], key="shift_field")
-        
-        # Team dropdown
         team_value = st.selectbox("Team", options=["A", "B", "C"], key="team_field")
-        
-        # Item dropdown (from Production_Config or cfg)
-        item_value = st.selectbox("Item", options=available_items, key="item_field")
-    
-    # We'll gather other fields either by standard inputs (legacy) or dynamic config if present
+        item_value = st.selectbox("Product", options=available_items, key="item_field")
+
+    # Column 2 - dynamic subtopics
     dynamic_record = {}
-    # If there's a config for the selected item, show dynamic subtopics
-    if not config_df.empty and "Item Name" in config_df.columns and item_value:
-        filtered = config_df[config_df["Item Name"] == item_value]
-        # Build dynamic inputs in the remaining column area
+    if not config_df.empty and item_value:
+        filtered = config_df[config_df["Product"] == item_value]
         with col2:
-            # iterate rows and create inputs
             for idx, row in filtered.iterrows():
                 subtopic = str(row.get("Subtopic", "")).strip()
                 dropdown_flag = str(row.get("Dropdown or Not", "")).strip().lower() == "yes"
                 options_text = str(row.get("Dropdown Options", "")).strip()
-                
-                # special handling for Timestamp and Date: auto-fill and disabled
+
+                # Auto-fill Timestamp and Date if in config
                 if subtopic.lower() == "timestamp":
                     st.text_input(subtopic, value=sri_time, disabled=True, key=f"dyn_{idx}_{subtopic}")
                     dynamic_record[subtopic] = sri_time
@@ -730,35 +716,31 @@ def production_ui():
                     st.text_input(subtopic, value=sri_date, disabled=True, key=f"dyn_{idx}_{subtopic}")
                     dynamic_record[subtopic] = sri_date
                     continue
-                
+
                 if dropdown_flag:
                     options = [opt.strip() for opt in options_text.split(",") if opt.strip()]
-                    if options:
-                        dynamic_record[subtopic] = st.selectbox(subtopic, [""] + options, key=f"dyn_{idx}_{subtopic}")
-                    else:
-                        dynamic_record[subtopic] = st.text_input(subtopic, key=f"dyn_{idx}_{subtopic}")
+                    dynamic_record[subtopic] = st.selectbox(subtopic, [""] + options, key=f"dyn_{idx}_{subtopic}")
                 else:
                     dynamic_record[subtopic] = st.text_input(subtopic, key=f"dyn_{idx}_{subtopic}")
     else:
-        # No production_config entry for the item — use legacy fields on col2
+        # Legacy numeric inputs
         with col2:
             target_quantity = st.number_input("Target Quantity", min_value=1, step=1, key="target_quantity")
             actual_quantity = st.number_input("Actual Quantity", min_value=1, step=1, key="actual_quantity")
             slow_shot_count = st.number_input("Slow shot Count", min_value=0, step=1, key="slow_shot_count")
             reject_quantity = st.number_input("Reject Quantity", min_value=0, step=1, key="reject_quantity")
             good_pcs_quantity = st.number_input("Good PCS Quantity", min_value=0, step=1, key="good_pcs_quantity")
-            # map to dynamic_record with the standard keys so sync uses them
-            dynamic_record["Target_Quantity"] = target_quantity
-            dynamic_record["Actual_Quantity"] = actual_quantity
-            dynamic_record["Slow_shot_Count"] = slow_shot_count
-            dynamic_record["Reject_Quantity"] = reject_quantity
-            dynamic_record["Good_PCS_Quantity"] = good_pcs_quantity
-    
+            dynamic_record.update({
+                "Target_Quantity": target_quantity,
+                "Actual_Quantity": actual_quantity,
+                "Slow_shot_Count": slow_shot_count,
+                "Reject_Quantity": reject_quantity,
+                "Good_PCS_Quantity": good_pcs_quantity
+            })
+
     comments = st.text_area("Comments", key="comments")
     
-    # Build the final record (always include User, EntryID, Timestamp, Date)
-    # If config provided 'Timestamp'/'Date' as subtopics, they are already in dynamic_record.
-    # Ensure we still have standard keys for compatibility.
+    # Build final record
     record = {
         "User": st.session_state.current_user,
         "EntryID": uuid.uuid4().hex,
@@ -770,32 +752,13 @@ def production_ui():
         "Item": item_value,
         "Comments": comments
     }
-    # merge dynamic_record into record (dynamic values will overwrite defaults if present)
-    for k, v in dynamic_record.items():
-        record[k] = v
+    record.update(dynamic_record)
 
-    # Legacy numeric fields might also be present in record from dynamic_record
-    # if they were not present, ensure the keys exist if user used the legacy inputs
-    if "Target_Quantity" not in record and 'target_quantity' in st.session_state:
-        record["Target_Quantity"] = st.session_state.get('target_quantity', "")
-    if "Actual_Quantity" not in record and 'actual_quantity' in st.session_state:
-        record["Actual_Quantity"] = st.session_state.get('actual_quantity', "")
-    if "Good_PCS_Quantity" not in record and 'good_pcs_quantity' in st.session_state:
-        record["Good_PCS_Quantity"] = st.session_state.get('good_pcs_quantity', "")
-    
-    # Save locally (do not sync automatically)
+    # Save locally
     if st.button("Save Locally", key="submit_btn"):
-        # Validate: require non-empty values for most fields (Comments optional)
-        # Exclude Comments and allow zeros in numeric fields if intended
-        missing = []
-        for k, v in record.items():
-            if k == "Comments":
-                continue
-            # Accept 0 as valid for numeric entries; require non-empty for strings
-            if v == "" or v is None:
-                missing.append(k)
+        missing = [k for k, v in record.items() if k != "Comments" and (v is None or v == "")]
         if missing:
-            st.error(f"Please fill required fields before saving. Missing: {', '.join(missing[:5])}")
+            st.error(f"Please fill required fields. Missing: {', '.join(missing[:5])}")
         else:
             try:
                 save_to_local('production', record)
@@ -803,12 +766,11 @@ def production_ui():
             except Exception as e:
                 st.error(f"Error saving data: {str(e)}")
 
-    # Display local entries (pending sync)
+    # Display local entries
     production_data = st.session_state.get('die_casting_production', [])
     if production_data:
         st.subheader("Local Entries (Pending Sync)")
         try:
-            # Convert to list of dictionaries first
             data_for_df = []
             for rec in production_data:
                 if isinstance(rec, dict):
@@ -818,25 +780,22 @@ def production_ui():
                         data_for_df.append(json.loads(rec))
                     except:
                         continue
-            
             if data_for_df:
                 local_df = pd.DataFrame(data_for_df)
-                display_cols = ["User", "Timestamp", "Date", "Machine", "Shift", "Item", "Target_Quantity", "Actual_Quantity", "Good_PCS_Quantity"]
+                display_cols = ["User", "Timestamp", "Date", "Machine", "Shift", "Item",
+                                "Target_Quantity", "Actual_Quantity", "Good_PCS_Quantity"]
                 available_cols = [col for col in display_cols if col in local_df.columns]
-                if available_cols:
-                    st.dataframe(local_df[available_cols].head(10))
-                else:
-                    # show full preview if those standard columns aren't present
-                    st.dataframe(local_df.head(10))
+                st.dataframe(local_df[available_cols].head(10) if available_cols else local_df.head(10))
             else:
                 st.info("No valid production data available")
         except Exception as e:
             st.error(f"Error displaying data: {str(e)}")
 
-    # Sync button at the bottom (manual)
+    # Sync button
     if st.button("🔄 Sync with Google Sheets Now"):
         sync_with_google_sheets()
         st.rerun()
+
 
 # ------------------ Quality UI ------------------
 def quality_ui():
@@ -1100,4 +1059,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
