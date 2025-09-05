@@ -275,12 +275,10 @@ elif choice == "Production Team":
         production_data_entry(st.session_state.logged_user)
     else:
         st.header("🔑 Production Team Login")
-        usernames = list(USER_CREDENTIALS.keys())
-        selected_user = st.selectbox("Select Username", usernames)
-        entered_password = st.text_input("Enter Password", type="password")
-        if st.button("Login"):
-            actual_password = USER_CREDENTIALS.get(selected_user)
-            if actual_password and entered_password == actual_password:
+        selected_user = st.selectbox("Select Username", list(USER_CREDENTIALS.keys()), key="prod_user")
+        entered_password = st.text_input("Enter Password", type="password", key="prod_pass")
+        if st.button("Login", key="prod_login_btn"):
+            if USER_CREDENTIALS.get(selected_user) == entered_password:
                 st.session_state.prod_logged_in = True
                 st.session_state.logged_user = selected_user
                 st.success(f"Welcome, {selected_user}!")
@@ -294,8 +292,8 @@ elif choice == "Quality Team":
         quality_data_entry(st.session_state.qual_logged_user)
     else:
         st.header("🔑 Quality Team Login")
-        entered_user = st.text_input("Enter Your Name", key="qual_user_input")
-        entered_pass = st.text_input("Enter Password", type="password", key="qual_pass_input")
+        entered_user = st.text_input("Enter Your Name", key="qual_user")
+        entered_pass = st.text_input("Enter Password", type="password", key="qual_pass")
         if st.button("Login", key="qual_login_btn"):
             if entered_pass == QUALITY_SHARED_PASSWORD:
                 st.session_state.qual_logged_in = True
@@ -311,8 +309,8 @@ elif choice == "Downtime Data":
         downtime_data_entry(st.session_state.downtime_logged_user)
     else:
         st.header("🔑 Downtime Team Login")
-        entered_user = st.text_input("Enter Your Name", key="downtime_user_input")
-        entered_pass = st.text_input("Enter Password", type="password", key="downtime_pass_input")
+        entered_user = st.text_input("Enter Your Name", key="downtime_user")
+        entered_pass = st.text_input("Enter Password", type="password", key="downtime_pass")
         if st.button("Login", key="downtime_login_btn"):
             if entered_pass == DOWNTIME_SHARED_PASSWORD:
                 st.session_state.downtime_logged_in = True
@@ -321,6 +319,8 @@ elif choice == "Downtime Data":
                 st.experimental_rerun()
             else:
                 st.error("❌ Incorrect password!")
+
+
 
 
 
