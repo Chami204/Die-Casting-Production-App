@@ -9,6 +9,7 @@ import time
 import threading
 from functools import lru_cache
 import json
+import numpy as np
 
 # ------------------ Settings ------------------
 APP_TITLE = "Die Casting Production"
@@ -58,8 +59,20 @@ DOWNTIME_DEFAULT_FIELDS = [
 def save_to_local_storage(data_type, data):
     """Save data to browser's local storage"""
     try:
+        # Convert int64 to regular int for JSON serialization
+        def convert_int64(obj):
+            if isinstance(obj, np.integer):
+                return int(obj)
+            elif isinstance(obj, list):
+                return [convert_int64(item) for item in obj]
+            elif isinstance(obj, dict):
+                return {k: convert_int64(v) for k, v in obj.items()}
+            return obj
+        
+        converted_data = convert_int64(data)
+        
         key = f"die_casting_{data_type}"
-        json_data = json.dumps(data)
+        json_data = json.dumps(converted_data)
         st.session_state[key] = json_data
     except Exception as e:
         st.error(f"Error saving to local storage: {str(e)}")
@@ -97,6 +110,17 @@ def save_to_local(data_type, record):
             st.error("Invalid record format")
             return
             
+        # Convert int64 values to regular int for JSON serialization
+        converted_record = {}
+        for key, value in record.items():
+            if hasattr(value, 'dtype'):  # Check if it's a numpy type
+                if np.issubdtype(value.dtype, np.integer):
+                    converted_record[key] = int(value)
+                else:
+                    converted_record[key] = value
+            else:
+                converted_record[key] = value
+            
         # Get current data - ensure it's always a list
         key = f"die_casting_{data_type}"
         current_data = st.session_state.get(key, [])
@@ -106,7 +130,7 @@ def save_to_local(data_type, record):
             current_data = []
         
         # Add new record
-        current_data.append(record)
+        current_data.append(converted_record)
         
         # Save back to session state
         st.session_state[key] = current_data
@@ -331,36 +355,6 @@ def refresh_config_if_needed():
     return False
 
 # ------------------ Local Data Management ------------------
-def save_to_local(data_type, record):
-    """Save data to local storage"""
-    try:
-        # Ensure record is a dictionary
-        if not isinstance(record, dict):
-            st.error("Invalid record format")
-            return
-            
-        # Get current data - ensure it's always a list
-        key = f"die_casting_{data_type}"
-        current_data = st.session_state.get(key, [])
-        
-        # Make sure current_data is a list, not a string
-        if not isinstance(current_data, list):
-            current_data = []
-        
-        # Add new record
-        current_data.append(record)
-        
-        # Save back to session state and local storage
-        st.session_state[key] = current_data
-        save_to_local_storage(data_type, current_data)
-        
-        # Mark as pending sync
-        st.session_state.die_casting_pending_sync = True
-        save_to_local_storage('pending_sync', True)
-        
-    except Exception as e:
-        st.error(f"Error saving data locally: {str(e)}")
-
 def sync_with_google_sheets():
     """Sync local data with Google Sheets when connection is available"""
     if not st.session_state.get('die_casting_pending_sync', False):
