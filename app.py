@@ -915,26 +915,17 @@ def quality_ui():
                 "Digital_Signature": digital_signature,
                 "Comments": comments
             }
-        
-        save_to_local('quality', record)
-        st.success(f"Quality data saved locally! Entry ID: {entry_id}")
-        
-        # Clear form after successful submission
-        st.rerun()
-            
-    except Exception as e:
-        st.error(f"Error saving quality data: {str(e)}")
-            
+    
+            # Save inside the try block
             save_to_local('quality', record)
             st.success(f"Quality data saved locally! Entry ID: {entry_id}")
-            
-            # Try to sync in background
-            if st.button("🔄 Sync Quality Data with Google Sheets Now"):
-                sync_with_google_sheets()
-                st.rerun()
-                
+    
+            # Clear form after successful submission
+            st.rerun()
+    
         except Exception as e:
             st.error(f"Error saving quality data: {str(e)}")
+
     
     # Display local quality entries
     quality_data = st.session_state.get('die_casting_quality', [])
@@ -1109,3 +1100,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
