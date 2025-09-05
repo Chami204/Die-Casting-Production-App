@@ -7,7 +7,7 @@ import pytz
 
 # ------------------ SETTINGS ------------------
 APP_TITLE = "Die Casting Production"
-SHEET_NAME = "FlowApp_Data"  # Replace with your Google Sheet name
+SHEET_NAME = "Your_Google_Sheet_Name"  # Replace with your Google Sheet name
 PRODUCTION_CONFIG_SHEET = "Production_Config"
 QUALITY_CONFIG_SHEET = "Quality_Config"
 DOWNTIME_CONFIG_SHEET = "Downtime_Config"
@@ -16,13 +16,13 @@ SRI_LANKA_TZ = pytz.timezone('Asia/Colombo')
 
 # ------------------ USER CREDENTIALS ------------------
 USER_CREDENTIALS = {
-    "user1": "12",
-    "user2": "123",
-    "user3": "1234"
+    "user1": "pass123",
+    "user2": "password",
+    "user3": "abc123"
 }
 
-QUALITY_SHARED_PASSWORD = "12"      # Same for all quality users
-DOWNTIME_SHARED_PASSWORD = "123"    # Same for all downtime users
+QUALITY_SHARED_PASSWORD = "qualitypass"
+DOWNTIME_SHARED_PASSWORD = "downtimepass"
 
 # ------------------ GOOGLE SHEET CONNECTION ------------------
 def get_gs_client():
@@ -35,7 +35,7 @@ def get_gs_client():
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive",
         ]
-
+        
         creds_dict = {
             "type": st.secrets["gcp_service_account"]["type"],
             "project_id": st.secrets["gcp_service_account"]["project_id"],
@@ -58,7 +58,11 @@ def get_gs_client():
 def get_gsheet_data(sheet_name):
     client = get_gs_client()
     if client:
-        return client.open(sheet_name)
+        try:
+            return client.open(sheet_name)
+        except Exception as e:
+            st.error(f"Error opening sheet '{sheet_name}': {e}")
+            return None
     else:
         return None
 
@@ -72,222 +76,142 @@ def read_sheet(sheet, worksheet_name):
         return pd.DataFrame()
 
 # ------------------ LOCAL SAVE ------------------
-def save_locally(data, storage_key):
-    if storage_key not in st.session_state:
-        st.session_state[storage_key] = []
-    st.session_state[storage_key].append(data)
+def save_locally(section, data):
+    key = f"{section}_local_data"
+    if key not in st.session_state:
+        st.session_state[key] = []
+    st.session_state[key].append(data)
     st.success("Data saved locally!")
 
-# ------------------ SYNC FUNCTION ------------------
+# ------------------ SYNC TO GOOGLE SHEET ------------------
 def sync_local_data_to_sheet(local_key, history_sheet_name):
-    if local_key not in st.session_state or len(st.session_state[local_key]) == 0:
-        st.warning("No local data to sync!")
+    sheet = get_gsheet_data(SHEET_NAME)
+    if not sheet:
+        st.error("Google Sheet not found.")
         return
-
-    client = get_gs_client()
-    if not client:
-        st.error("Cannot connect to Google Sheets!")
+    df_local = pd.DataFrame(st.session_state.get(local_key, []))
+    if df_local.empty:
+        st.info("No local data to sync.")
         return
 
     try:
-        ws = client.open(SHEET_NAME).worksheet(history_sheet_name)
-    except gspread.exceptions.WorksheetNotFound:
-        st.error(f"Worksheet '{history_sheet_name}' not found!")
+        # Check if sheet exists, else create
+        try:
+            worksheet = sheet.worksheet(history_sheet_name)
+        except gspread.WorksheetNotFound:
+            worksheet = sheet.add_worksheet(title=history_sheet_name, rows="100", cols="50")
+
+        existing_df = pd.DataFrame(worksheet.get_all_records())
+        combined_df = pd.concat([existing_df, df_local], ignore_index=True)
+
+        # Update worksheet
+        worksheet.clear()
+        worksheet.update([combined_df.columns.values.tolist()] + combined_df.values.tolist())
+        st.success(f"✅ {history_sheet_name} synced successfully!")
+        # Clear local storage
+        st.session_state[local_key] = []
+    except Exception as e:
+        st.error(f"Error syncing data: {e}")
+
+# ------------------ LOAD CONFIG DATA ------------------
+def load_config(sheet_name, config_sheet, force_refresh=False):
+    key = f"{config_sheet}_df"
+    if key not in st.session_state or force_refresh:
+        sheet = get_gsheet_data(sheet_name)
+        st.session_state[key] = read_sheet(sheet, config_sheet)
+        st.success(f"{config_sheet} data loaded!")
+    return st.session_state.get(key, pd.DataFrame())
+
+# ------------------ DATA ENTRY ------------------
+def data_entry(section, config_df, logged_user, local_key, history_sheet_name, include_product=True):
+    if config_df.empty:
+        st.error(f"⚠️ {section} config not loaded!")
         return
 
-    # Get existing sheet headers
-    existing_cols = ws.row_values(1) if ws.row_values(1) else []
+    st.subheader(f"Please Enter the {section} Data")
+    if include_product:
+        products = config_df['Product'].unique().tolist()
+        selected_product = st.selectbox("Select Product", products)
+    else:
+        selected_product = None
 
-    # Collect all keys from local data
-    all_keys = set(existing_cols)
-    for entry in st.session_state[local_key]:
-        all_keys.update(entry.keys())
-    all_keys = list(all_keys)
+    now = datetime.now(SRI_LANKA_TZ).strftime(TIME_FORMAT)
+    st.write(f"📅 Date & Time: {now}")
 
-    # Update header row if new columns exist
-    if existing_cols != all_keys:
-        ws.update('1:1', [all_keys])
+    if include_product:
+        subtopics_df = config_df[config_df['Product'] == selected_product]
+    else:
+        subtopics_df = config_df
 
-    # Prepare data rows
-    rows_to_append = []
-    for entry in st.session_state[local_key]:
-        row = [entry.get(col, "") for col in all_keys]
-        rows_to_append.append(row)
+    entry = {"User": logged_user}
+    if include_product:
+        entry["Product"] = selected_product
+    entry["DateTime"] = now
 
-    # Append data
-    ws.append_rows(rows_to_append, value_input_option="USER_ENTERED")
+    for idx, row in subtopics_df.iterrows():
+        col_name = row["Subtopic"]
+        if str(row.get("Dropdown or Not", "no")).strip().lower() == "yes":
+            options = [opt.strip() for opt in str(row.get("Dropdown Options", "")).split(",")]
+            entry[col_name] = st.selectbox(col_name, options, key=f"{section}_{col_name}")
+        else:
+            entry[col_name] = st.text_input(col_name, key=f"{section}_{col_name}")
 
-    # Clear local storage
-    st.session_state[local_key] = []
-    st.success(f"✅ {len(rows_to_append)} records synced to {history_sheet_name}!")
+    # Buttons
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button(f"💾 Save Locally ({section})"):
+            save_locally(local_key, entry)
+    with col2:
+        if st.button(f"📤 Sync to Google Sheet ({section})"):
+            sync_local_data_to_sheet(local_key, history_sheet_name)
+    with col3:
+        if st.button(f"🔓 Logout ({section})"):
+            st.session_state[f"{section.lower()}_logged_in"] = False
+            st.experimental_rerun()
 
+# ------------------ SYNC ALL LOCAL DATA ------------------
 def sync_all_local_data():
     synced_sections = []
-
-    if "prod_local_data" in st.session_state and st.session_state["prod_local_data"]:
-        sync_local_data_to_sheet("prod_local_data", "Production_History")
-        synced_sections.append("Production")
-    if "qual_local_data" in st.session_state and st.session_state["qual_local_data"]:
-        sync_local_data_to_sheet("qual_local_data", "Quality_History")
-        synced_sections.append("Quality")
-    if "downtime_local_data" in st.session_state and st.session_state["downtime_local_data"]:
-        sync_local_data_to_sheet("downtime_local_data", "Downtime_History")
-        synced_sections.append("Downtime")
-
+    sections = [
+        ("prod_local_data", "Production_History"),
+        ("qual_local_data", "Quality_History"),
+        ("downtime_local_data", "Downtime_History")
+    ]
+    for local_key, sheet_name in sections:
+        if local_key in st.session_state and st.session_state[local_key]:
+            sync_local_data_to_sheet(local_key, sheet_name)
+            synced_sections.append(sheet_name.replace("_History", ""))
     if not synced_sections:
         st.info("No local data to sync.")
     else:
         st.success(f"✅ Synced data for: {', '.join(synced_sections)}")
 
-
-# ------------------ DATA ENTRY FUNCTIONS ------------------
-def production_data_entry(logged_user):
-    df = st.session_state.production_config_df
-    if df.empty:
-        st.error("⚠️ Production_Config not loaded!")
-        return
-
-    st.subheader("Please Enter the Production Data")
-    products = df['Product'].unique().tolist()
-    selected_product = st.selectbox("Select Product", products)
-    now = datetime.now(SRI_LANKA_TZ).strftime(TIME_FORMAT)
-    st.write(f"📅 Date & Time: {now}")
-
-    subtopics_df = df[df['Product'] == selected_product]
-    entry = {"User": logged_user, "Product": selected_product, "DateTime": now}
-
-    for _, row in subtopics_df.iterrows():
-        if str(row["Dropdown or Not"]).strip().lower() == "yes":
-            options = [opt.strip() for opt in str(row["Dropdown Options"]).split(",")]
-            entry[row["Subtopic"]] = st.selectbox(row["Subtopic"], options, key=row["Subtopic"])
-        else:
-            entry[row["Subtopic"]] = st.text_input(row["Subtopic"], key=row["Subtopic"])
-
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Save Locally"):
-            save_locally(entry, "prod_local_data")
-    with col2:
-        if st.button("💾 Sync Production Data"):
-            sync_local_data_to_sheet("prod_local_data", "Production_History")
-
-    if st.button("Logout"):
-        st.session_state.prod_logged_in = False
-        st.session_state.logged_user = ""
-        st.experimental_rerun()
-
-def quality_data_entry(logged_user):
-    df = st.session_state.quality_config_df
-    if df.empty:
-        st.error("⚠️ Quality_Config not loaded!")
-        return
-
-    st.subheader("Please Enter the Quality Data")
-    products = st.session_state.production_config_df['Product'].unique().tolist()
-    selected_product = st.selectbox("Select Product", products)
-    now = datetime.now(SRI_LANKA_TZ).strftime(TIME_FORMAT)
-    st.write(f"📅 Date & Time: {now}")
-
-    subtopics_df = df[df['Product'] == selected_product]
-    entry = {"User": logged_user, "Product": selected_product, "DateTime": now}
-
-    for _, row in subtopics_df.iterrows():
-        if str(row["Dropdown or Not"]).strip().lower() == "yes":
-            options = [opt.strip() for opt in str(row["Dropdown Options"]).split(",")]
-            entry[row["Subtopic"]] = st.selectbox(row["Subtopic"], options, key=f"qual_{row['Subtopic']}")
-        else:
-            entry[row["Subtopic"]] = st.text_input(row["Subtopic"], key=f"qual_{row['Subtopic']}")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Save Locally"):
-            save_locally(entry, "qual_local_data")
-    with col2:
-        if st.button("💾 Sync Quality Data"):
-            sync_local_data_to_sheet("qual_local_data", "Quality_History")
-
-    if st.button("Logout"):
-        st.session_state.qual_logged_in = False
-        st.session_state.qual_logged_user = ""
-        st.experimental_rerun()
-
-def downtime_data_entry(logged_user):
-    df = st.session_state.downtime_config_df
-    prod_df = st.session_state.production_config_df
-    if df.empty or prod_df.empty:
-        st.error("⚠️ Downtime_Config or Production_Config not loaded!")
-        return
-
-    st.subheader("Please Enter the Downtime Data")
-    planned_items = prod_df['Product'].unique().tolist()
-    selected_item = st.selectbox("Planned Item", planned_items)
-    now = datetime.now(SRI_LANKA_TZ).strftime(TIME_FORMAT)
-    st.write(f"📅 Date & Time: {now}")
-
-    entry = {"User": logged_user, "Planned Item": selected_item, "DateTime": now}
-
-    for col in df.columns:
-        if str(df[col].iloc[0]).strip().lower() == "yes":
-            options = [opt.strip() for opt in str(df[col].iloc[1]).split(",")]
-            entry[col] = st.selectbox(col, options, key=f"downtime_{col}")
-        else:
-            entry[col] = st.text_input(col, key=f"downtime_{col}")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Save Locally"):
-            save_locally(entry, "downtime_local_data")
-    with col2:
-        if st.button("💾 Sync Downtime Data"):
-            sync_local_data_to_sheet("downtime_local_data", "Downtime_History")
-
-    if st.button("Logout"):
-        st.session_state.downtime_logged_in = False
-        st.session_state.downtime_logged_user = ""
-        st.experimental_rerun()
-
-# ------------------ APP CONFIG ------------------
+# ------------------ MAIN APP ------------------
 st.set_page_config(page_title=APP_TITLE, layout="centered")
 st.title(APP_TITLE)
 
 menu = ["Home", "Production Team Login", "Quality Team Login", "Downtime Data Recordings"]
 choice = st.sidebar.selectbox("Menu", menu)
 
-sheet = get_gsheet_data(SHEET_NAME)
-if sheet:
-    if "production_config_df" not in st.session_state:
-        st.session_state.production_config_df = read_sheet(sheet, PRODUCTION_CONFIG_SHEET)
-    if "quality_config_df" not in st.session_state:
-        st.session_state.quality_config_df = read_sheet(sheet, QUALITY_CONFIG_SHEET)
-    if "downtime_config_df" not in st.session_state:
-        st.session_state.downtime_config_df = read_sheet(sheet, DOWNTIME_CONFIG_SHEET)
-
-# ------------------ HOME ------------------
+# ------------------ HOME PAGE ------------------
 if choice == "Home":
     st.markdown("<h2 style='text-align: center;'>Welcome to Die Casting Production App</h2>", unsafe_allow_html=True)
     st.markdown("<h4 style='text-align: center;'>Please select a section to continue</h4>", unsafe_allow_html=True)
-
     st.markdown("---")
     st.header("⚡ Sync Any Unsynced Local Data")
     if st.button("💾 Sync All Local Data"):
         sync_all_local_data()
 
-
-# ------------------ PRODUCTION TEAM LOGIN ------------------
 # ------------------ PRODUCTION TEAM LOGIN ------------------
 elif choice == "Production Team Login":
-    st.header("🔑 Production Team Login")
-
     if "prod_logged_in" not in st.session_state:
         st.session_state.prod_logged_in = False
         st.session_state.logged_user = ""
 
     if not st.session_state.prod_logged_in:
-        # Show login form
         usernames = list(USER_CREDENTIALS.keys())
         selected_user = st.selectbox("Select Username", usernames)
         entered_password = st.text_input("Enter Password", type="password")
-
         if st.button("Login"):
             actual_password = USER_CREDENTIALS.get(selected_user)
             if actual_password and entered_password == actual_password:
@@ -298,9 +222,8 @@ elif choice == "Production Team Login":
             else:
                 st.error("❌ Incorrect password!")
     else:
-        # User is logged in, show data entry
-        production_data_entry(logged_user=st.session_state.logged_user)
-
+        config_df = load_config(SHEET_NAME, PRODUCTION_CONFIG_SHEET)
+        data_entry("Production", config_df, st.session_state.logged_user, "prod_local_data", "Production_History")
 
 # ------------------ QUALITY TEAM LOGIN ------------------
 elif choice == "Quality Team Login":
@@ -348,6 +271,3 @@ elif choice == "Downtime Data Recordings":
             # Add Planned Item column
             downtime_config_df["Product"] = st.selectbox("Select Planned Item", prod_config_df["Product"].unique())
         data_entry("Downtime", downtime_config_df, st.session_state.downtime_logged_user, "downtime_local_data", "Downtime_History", include_product=False)
-
-
-
