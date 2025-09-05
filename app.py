@@ -292,9 +292,14 @@ elif choice == "Quality Team":
         quality_data_entry(st.session_state.qual_logged_user)
     else:
         st.header("🔑 Quality Team Login")
-        entered_user = st.text_input("Enter Your Name", key="qual_user")
-        entered_pass = st.text_input("Enter Password", type="password", key="qual_pass")
-        if st.button("Login", key="qual_login_btn"):
+        
+        # Use a form to avoid disappearing inputs
+        with st.form(key="qual_login_form"):
+            entered_user = st.text_input("Enter Your Name", key="qual_user_input")
+            entered_pass = st.text_input("Enter Password", type="password", key="qual_pass_input")
+            login_btn = st.form_submit_button("Login")
+        
+        if login_btn:
             if entered_pass == QUALITY_SHARED_PASSWORD:
                 st.session_state.qual_logged_in = True
                 st.session_state.qual_logged_user = entered_user
@@ -319,6 +324,7 @@ elif choice == "Downtime Data":
                 st.experimental_rerun()
             else:
                 st.error("❌ Incorrect password!")
+
 
 
 
