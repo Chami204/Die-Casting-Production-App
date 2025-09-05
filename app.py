@@ -632,6 +632,7 @@ def admin_ui():
         st.rerun()
 
 # ------------------ Production UI ------------------
+# ------------------ Production UI ------------------
 def production_ui():
     st.subheader(f"Production Data Entry - User: {st.session_state.current_user}")
     
@@ -655,7 +656,7 @@ def production_ui():
     downtime_config = read_downtime_config()
     machines = downtime_config["machines"]
     
-    # Load production configuration for dynamic subtopics
+    # Read production configuration directly from sheet (for dynamic subtopics)
     config_df = pd.DataFrame()
     try:
         if initialize_google_sheets():
@@ -671,73 +672,78 @@ def production_ui():
     except Exception:
         config_df = pd.DataFrame()
     
-    # Determine available items
-    if not config_df.empty and "Product" in config_df.columns:
-        available_items = list(config_df["Product"].dropna().unique())
+    # Determine available items (Item Name) either from config_df or from st.session_state.cfg fallback
+    if not config_df.empty and "Item Name" in config_df.columns:
+        available_items = list(config_df["Item Name"].dropna().unique())
     else:
-        available_items = list(st.session_state.cfg.keys()) if 'cfg' in st.session_state else []
+        available_items = list(st.session_state.cfg.keys())
     
     if not available_items:
         st.info("No products available yet.")
         return
 
     st.write("Fill **all fields** below:")
-
+    
     col1, col2 = st.columns(2)
     
-    # Current time/date
-    sri_time = get_sri_lanka_time()
-    sri_date = sri_time.split(" ")[0]
+    # Prepare current time/date
+    sri_time = get_sri_lanka_time()  # e.g., "2025-09-05 08:00:00"
     
-    # Column 1 - standard fields
     with col1:
+        # Date & Time field
         date_value = st.text_input("Date & Time", value=sri_time, key="date_field")
+        
+        # Machine dropdown
         machine_value = st.selectbox("Machine", options=machines, key="machine_field")
+        
+        # Shift dropdown
         shift_value = st.selectbox("Shift", options=["Day", "Night"], key="shift_field")
+        
+        # Team dropdown
         team_value = st.selectbox("Team", options=["A", "B", "C"], key="team_field")
-        item_value = st.selectbox("Product", options=available_items, key="item_field")
-
+        
+        # Item dropdown (from Production_Config or cfg)
+        item_value = st.selectbox("Item", options=available_items, key="item_field")
+    
     # Column 2 - dynamic subtopics
     dynamic_record = {}
-    if not config_df.empty and item_value:
-        filtered = config_df[config_df["Product"] == item_value]
-        with col2:
+    with col2:
+        if not config_df.empty and "Item Name" in config_df.columns and item_value:
+            filtered = config_df[config_df["Item Name"] == item_value]
             for idx, row in filtered.iterrows():
                 subtopic = str(row.get("Subtopic", "")).strip()
                 dropdown_flag = str(row.get("Dropdown or Not", "")).strip().lower() == "yes"
                 options_text = str(row.get("Dropdown Options", "")).strip()
-
-                # Auto-fill Timestamp and Date if in config
+                
+                # Timestamp & Date auto-filled
                 if subtopic.lower() == "timestamp":
                     st.text_input(subtopic, value=sri_time, disabled=True, key=f"dyn_{idx}_{subtopic}")
                     dynamic_record[subtopic] = sri_time
                     continue
                 if subtopic.lower() == "date":
-                    st.text_input(subtopic, value=sri_date, disabled=True, key=f"dyn_{idx}_{subtopic}")
-                    dynamic_record[subtopic] = sri_date
+                    st.text_input(subtopic, value=sri_time, disabled=True, key=f"dyn_{idx}_{subtopic}")
+                    dynamic_record[subtopic] = sri_time
                     continue
-
+                
+                # Dropdown or text input
                 if dropdown_flag:
                     options = [opt.strip() for opt in options_text.split(",") if opt.strip()]
                     dynamic_record[subtopic] = st.selectbox(subtopic, [""] + options, key=f"dyn_{idx}_{subtopic}")
                 else:
                     dynamic_record[subtopic] = st.text_input(subtopic, key=f"dyn_{idx}_{subtopic}")
-    else:
-        # Legacy numeric inputs
-        with col2:
+        else:
+            # Legacy numeric fields if no config
             target_quantity = st.number_input("Target Quantity", min_value=1, step=1, key="target_quantity")
             actual_quantity = st.number_input("Actual Quantity", min_value=1, step=1, key="actual_quantity")
             slow_shot_count = st.number_input("Slow shot Count", min_value=0, step=1, key="slow_shot_count")
             reject_quantity = st.number_input("Reject Quantity", min_value=0, step=1, key="reject_quantity")
             good_pcs_quantity = st.number_input("Good PCS Quantity", min_value=0, step=1, key="good_pcs_quantity")
-            dynamic_record.update({
-                "Target_Quantity": target_quantity,
-                "Actual_Quantity": actual_quantity,
-                "Slow_shot_Count": slow_shot_count,
-                "Reject_Quantity": reject_quantity,
-                "Good_PCS_Quantity": good_pcs_quantity
-            })
-
+            dynamic_record["Target_Quantity"] = target_quantity
+            dynamic_record["Actual_Quantity"] = actual_quantity
+            dynamic_record["Slow_shot_Count"] = slow_shot_count
+            dynamic_record["Reject_Quantity"] = reject_quantity
+            dynamic_record["Good_PCS_Quantity"] = good_pcs_quantity
+    
     comments = st.text_area("Comments", key="comments")
     
     # Build final record
@@ -745,13 +751,14 @@ def production_ui():
         "User": st.session_state.current_user,
         "EntryID": uuid.uuid4().hex,
         "Timestamp": dynamic_record.get("Timestamp", sri_time),
-        "Date": dynamic_record.get("Date", date_value if date_value else sri_date),
+        "Date": dynamic_record.get("Date", date_value if date_value else sri_time),
         "Machine": dynamic_record.get("Machine", machine_value),
         "Shift": dynamic_record.get("Shift", shift_value),
         "Team": dynamic_record.get("Team", team_value),
         "Item": item_value,
         "Comments": comments
     }
+    # Merge dynamic_record into record
     record.update(dynamic_record)
 
     # Save locally
@@ -771,18 +778,10 @@ def production_ui():
     if production_data:
         st.subheader("Local Entries (Pending Sync)")
         try:
-            data_for_df = []
-            for rec in production_data:
-                if isinstance(rec, dict):
-                    data_for_df.append(rec)
-                else:
-                    try:
-                        data_for_df.append(json.loads(rec))
-                    except:
-                        continue
+            data_for_df = [rec if isinstance(rec, dict) else json.loads(rec) for rec in production_data]
             if data_for_df:
                 local_df = pd.DataFrame(data_for_df)
-                display_cols = ["User", "Timestamp", "Date", "Machine", "Shift", "Item",
+                display_cols = ["User", "Timestamp", "Date", "Machine", "Shift", "Item", 
                                 "Target_Quantity", "Actual_Quantity", "Good_PCS_Quantity"]
                 available_cols = [col for col in display_cols if col in local_df.columns]
                 st.dataframe(local_df[available_cols].head(10) if available_cols else local_df.head(10))
@@ -795,6 +794,7 @@ def production_ui():
     if st.button("🔄 Sync with Google Sheets Now"):
         sync_with_google_sheets()
         st.rerun()
+
 
 
 # ------------------ Quality UI ------------------
@@ -1059,6 +1059,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
