@@ -163,17 +163,17 @@ def quality_data_entry(logged_user):
     subtopics_df = quality_config_df[quality_config_df['Product'] == selected_product]
 
     # Initialize production entry with username
-    production_entry = {"User": logged_user, "Product": selected_product, "DateTime": now}
+    quality_entry = {"User": logged_user, "Product": selected_product, "DateTime": now}
 
     for idx, row in subtopics_df.iterrows():
         if str(row["Dropdown or Not"]).strip().lower() == "yes":
             options = [opt.strip() for opt in str(row["Dropdown Options"]).split(",")]
-            production_entry[row["Subtopic"]] = st.selectbox(row["Subtopic"], options, key=f"{logged_user}_{row['Subtopic']}")
+            quality_entry[row["Subtopic"]] = st.selectbox(row["Subtopic"], options, key=f"{logged_user}_{row['Subtopic']}")
         else:
-            production_entry[row["Subtopic"]] = st.text_input(row["Subtopic"], key=f"{logged_user}_{row['Subtopic']}")
+            quality_entry[row["Subtopic"]] = st.text_input(row["Subtopic"], key=f"{logged_user}_{row['Subtopic']}")
 
     if st.button("Save Locally"):
-        save_locally(production_entry)
+        save_locally(quality_entry)
 
 
 
