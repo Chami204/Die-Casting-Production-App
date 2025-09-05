@@ -257,10 +257,15 @@ def sync_quality_to_google_sheet():
             existing_headers = []
 
         # Collect all keys from local storage
-        all_keys = set(existing_headers)
+        all_keys = set()
         for entry in st.session_state.quality_local_storage:
             all_keys.update(entry.keys())
-        all_keys = list(all_keys)  # preserve order
+        all_keys = list(all_keys)
+
+        # Ensure 'User' is the first column
+        if "User" in all_keys:
+            all_keys.remove("User")
+        all_keys = ["User"] + all_keys
 
         # Update worksheet header row if new keys are added
         worksheet_values = worksheet.get_all_values()
@@ -435,6 +440,7 @@ elif choice == "Downtime Data Recordings":
     if st.session_state.downtime_logged_in:
         st.subheader(f"Welcome {st.session_state.downtime_logged_user}, enter downtime data here.")
         # TODO: Add your downtime data entry form here
+
 
 
 
