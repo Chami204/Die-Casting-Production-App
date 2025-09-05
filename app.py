@@ -56,27 +56,25 @@ DOWNTIME_DEFAULT_FIELDS = [
 
 # ------------------ Local Storage Helpers ------------------
 def save_to_local_storage(data_type, data):
-    """Save data to a persistent session cache (don't stringify lists)."""
+    """Save data to browser's local storage"""
     try:
         key = f"die_casting_{data_type}"
-        # Store Python object directly to avoid breaking displays
-        st.session_state[key] = data
+        json_data = json.dumps(data)
+        st.session_state[key] = json_data
     except Exception as e:
         st.error(f"Error saving to local storage: {str(e)}")
 
 def load_from_local_storage(data_type, default=None):
-    """Load data from the session cache (fallback to JSON decoding if needed)."""
+    """Load data from browser's local storage"""
     try:
         key = f"die_casting_{data_type}"
         if key in st.session_state:
             loaded_data = st.session_state[key]
-            # Backward compatibility if something was stored as a JSON string previously
+            # Check if it's a JSON string and parse it
             if isinstance(loaded_data, str):
-                try:
-                    return json.loads(loaded_data)
-                except Exception:
-                    return default if default is not None else []
-            return loaded_data
+                return json.loads(loaded_data)
+            else:
+                return loaded_data
     except Exception as e:
         st.error(f"Error loading from local storage: {str(e)}")
     return default if default is not None else []
@@ -113,7 +111,7 @@ def save_to_local(data_type, record):
         # Save back to session state
         st.session_state[key] = current_data
         
-        # Save to local storage (keep as list, not JSON string)
+        # Save to local storage
         save_to_local_storage(data_type, current_data)
         
         # Mark as pending sync
@@ -381,30 +379,59 @@ def sync_with_google_sheets():
         name = st.secrets["gsheet"]["spreadsheet_name"]
         sh = client.open(name)
         
-        # Sync production data
+        # Sync production data (dynamic columns support)
         sync_count = 0
         production_data = st.session_state.get('die_casting_production', [])
         if production_data:
             try:
-                ws_history = sh.worksheet("History")
+                # Load existing History sheet data (if exists)
+                try:
+                    ws_history = sh.worksheet("History")
+                    history_values = ws_history.get_all_records()
+                    history_df = pd.DataFrame(history_values)
+                except gspread.WorksheetNotFound:
+                    # Create empty DataFrame if history not found
+                    history_df = pd.DataFrame()
+
+                # Ensure history_df is a DataFrame with columns if empty
+                if history_df.empty:
+                    # Start with a minimal header set (preserve expected common headers)
+                    history_df = pd.DataFrame(columns=["User", "EntryID", "Timestamp", "Comments"] + DEFAULT_SUBTOPICS)
+
+                # For each local record, ensure its keys exist as columns, add if missing
                 for record in production_data:
-                    # Ensure record is a dictionary, not a string
+                    # If record stored as JSON string, try to parse
                     if isinstance(record, str):
                         try:
                             record = json.loads(record)
                         except:
                             continue
-                    
-                    if isinstance(record, dict):
-                        headers = ["User", "EntryID", "Timestamp", "Comments"] + DEFAULT_SUBTOPICS
-                        row = [record.get(h, "") for h in headers]
-                        ws_history.append_row(row, value_input_option="USER_ENTERED")
-                        sync_count += 1
-                        time.sleep(1)  # Delay between writes
+
+                    if not isinstance(record, dict):
+                        continue
+
+                    # Add missing columns to history_df
+                    for k in record.keys():
+                        if k not in history_df.columns:
+                            history_df[k] = ""
+
+                    # Append this record as a new row (aligning with history_df columns)
+                    row = {col: record.get(col, "") for col in history_df.columns}
+                    history_df = pd.concat([history_df, pd.DataFrame([row])], ignore_index=True)
+                    sync_count += 1
+
+                # Write full updated history_df back to sheet (this updates headers too)
+                ws = None
+                try:
+                    ws = sh.worksheet("History")
+                except gspread.WorksheetNotFound:
+                    ws = sh.add_worksheet(title="History", rows=1000, cols=max(20, len(history_df.columns)))
+                # Convert dataframe to list of lists and update
+                ws.update([history_df.columns.values.tolist()] + history_df.values.tolist())
             except Exception as e:
                 st.error(f"Error syncing production data: {str(e)}")
         
-        # Sync quality data
+        # Sync quality data (unchanged logic)
         quality_data = st.session_state.get('die_casting_quality', [])
         if quality_data:
             try:
@@ -426,7 +453,7 @@ def sync_with_google_sheets():
             except Exception as e:
                 st.error(f"Error syncing quality data: {str(e)}")
         
-        # Sync downtime data
+        # Sync downtime data (unchanged logic)
         downtime_data = st.session_state.get('die_casting_downtime', [])
         if downtime_data:
             try:
@@ -608,7 +635,7 @@ def admin_ui():
 def production_ui():
     st.subheader(f"Production Data Entry - User: {st.session_state.current_user}")
     
-    # Refresh button
+    # Refresh button at the top
     col1, col2 = st.columns([3, 1])
     with col1:
         st.write("")  # Spacer
@@ -621,139 +648,195 @@ def production_ui():
                 st.warning("Using local data cache")
             st.rerun()
     
-    # --- Load Production Config dynamically ---
+    # Try to refresh config (non-blocking)
     refresh_config_if_needed()
-
-    # Try to connect to Google Sheets (only to read config)
-    if not initialize_google_sheets():
-        st.error("Cannot connect to Google Sheets. Using offline mode.")
-        return
-
-    try:
-        client = get_gs_client()
-        name = st.secrets["gsheet"]["spreadsheet_name"]
-        sh = client.open(name)
-        ws_config = sh.worksheet("Production_Config")
-        config_values = ws_config.get_all_records()
-        config_df = pd.DataFrame(config_values)
-    except Exception as e:
-        st.error(f"Error reading Production_Config: {str(e)}")
-        return
-
-    # Validate config columns
-    required_cols = ["Item Name", "Subtopic", "Dropdown or Not", "Dropdown Options"]
-    for col in required_cols:
-        if col not in config_df.columns:
-            st.error(f"Missing required column in Production_Config: {col}")
-            return
-
-    # --- Step 1: Select Item Name ---
-    item_names = config_df["Item Name"].dropna().unique().tolist()
-    selected_item = st.selectbox("Select Item Name", [""] + item_names, key="item_field")
-
-    if not selected_item:
-        st.info("Please select an Item Name to proceed.")
-        return
-
-    # Filter config for selected item
-    filtered_config = config_df[config_df["Item Name"] == selected_item]
-
-    # --- Step 2: Dynamically Generate Fields ---
-    st.subheader(f"Enter Data for {selected_item}")
     
-    current_sri_lanka_time = get_sri_lanka_time()
-    current_date = current_sri_lanka_time.split(" ")[0]  # YYYY-MM-DD only
+    # Read downtime configuration for machines
+    downtime_config = read_downtime_config()
+    machines = downtime_config["machines"]
+    
+    # Read production configuration directly from sheet (for dynamic subtopics)
+    config_df = pd.DataFrame()
+    try:
+        if initialize_google_sheets():
+            client = get_gs_client()
+            name = st.secrets["gsheet"]["spreadsheet_name"]
+            sh = client.open(name)
+            try:
+                ws_config = sh.worksheet("Production_Config")
+                config_values = ws_config.get_all_records()
+                config_df = pd.DataFrame(config_values)
+            except Exception:
+                # If sheet not available or malformed, fall back to local cfg
+                config_df = pd.DataFrame()
+    except Exception:
+        config_df = pd.DataFrame()
+    
+    # Determine available items (Item Name) either from config_df or from st.session_state.cfg fallback
+    if not config_df.empty and "Item Name" in config_df.columns:
+        available_items = list(config_df["Item Name"].dropna().unique())
+    else:
+        # fallback to keys of cfg for compatibility with older config
+        available_items = list(st.session_state.cfg.keys())
+    
+    if not available_items:
+        st.info("No products available yet.")
+        return
 
+    st.write("Fill **all fields** below:")
+    
+    col1, col2 = st.columns(2)
+    
+    # Prepare current time/date
+    sri_time = get_sri_lanka_time()
+    sri_date = sri_time.split(" ")[0]
+    
+    with col1:
+        # If config provides a "Date" subtopic automatically, we will handle it dynamically below.
+        # But keep a legacy Date field to match original layout if needed.
+        date_value = st.text_input("Date", value=sri_date, key="date_field")
+        
+        # Machine dropdown (from downtime config) - this is still useful as a general fallback
+        machine_value = st.selectbox("Machine", options=machines, key="machine_field")
+        
+        # Shift dropdown
+        shift_value = st.selectbox("Shift", options=["Day", "Night"], key="shift_field")
+        
+        # Team dropdown
+        team_value = st.selectbox("Team", options=["A", "B", "C"], key="team_field")
+        
+        # Item dropdown (from Production_Config or cfg)
+        item_value = st.selectbox("Item", options=available_items, key="item_field")
+    
+    # We'll gather other fields either by standard inputs (legacy) or dynamic config if present
+    dynamic_record = {}
+    # If there's a config for the selected item, show dynamic subtopics
+    if not config_df.empty and "Item Name" in config_df.columns and item_value:
+        filtered = config_df[config_df["Item Name"] == item_value]
+        # Build dynamic inputs in the remaining column area
+        with col2:
+            # iterate rows and create inputs
+            for idx, row in filtered.iterrows():
+                subtopic = str(row.get("Subtopic", "")).strip()
+                dropdown_flag = str(row.get("Dropdown or Not", "")).strip().lower() == "yes"
+                options_text = str(row.get("Dropdown Options", "")).strip()
+                
+                # special handling for Timestamp and Date: auto-fill and disabled
+                if subtopic.lower() == "timestamp":
+                    st.text_input(subtopic, value=sri_time, disabled=True, key=f"dyn_{idx}_{subtopic}")
+                    dynamic_record[subtopic] = sri_time
+                    continue
+                if subtopic.lower() == "date":
+                    st.text_input(subtopic, value=sri_date, disabled=True, key=f"dyn_{idx}_{subtopic}")
+                    dynamic_record[subtopic] = sri_date
+                    continue
+                
+                if dropdown_flag:
+                    options = [opt.strip() for opt in options_text.split(",") if opt.strip()]
+                    if options:
+                        dynamic_record[subtopic] = st.selectbox(subtopic, [""] + options, key=f"dyn_{idx}_{subtopic}")
+                    else:
+                        dynamic_record[subtopic] = st.text_input(subtopic, key=f"dyn_{idx}_{subtopic}")
+                else:
+                    dynamic_record[subtopic] = st.text_input(subtopic, key=f"dyn_{idx}_{subtopic}")
+    else:
+        # No production_config entry for the item — use legacy fields on col2
+        with col2:
+            target_quantity = st.number_input("Target Quantity", min_value=1, step=1, key="target_quantity")
+            actual_quantity = st.number_input("Actual Quantity", min_value=1, step=1, key="actual_quantity")
+            slow_shot_count = st.number_input("Slow shot Count", min_value=0, step=1, key="slow_shot_count")
+            reject_quantity = st.number_input("Reject Quantity", min_value=0, step=1, key="reject_quantity")
+            good_pcs_quantity = st.number_input("Good PCS Quantity", min_value=0, step=1, key="good_pcs_quantity")
+            # map to dynamic_record with the standard keys so sync uses them
+            dynamic_record["Target_Quantity"] = target_quantity
+            dynamic_record["Actual_Quantity"] = actual_quantity
+            dynamic_record["Slow_shot_Count"] = slow_shot_count
+            dynamic_record["Reject_Quantity"] = reject_quantity
+            dynamic_record["Good_PCS_Quantity"] = good_pcs_quantity
+    
+    comments = st.text_area("Comments", key="comments")
+    
+    # Build the final record (always include User, EntryID, Timestamp, Date)
+    # If config provided 'Timestamp'/'Date' as subtopics, they are already in dynamic_record.
+    # Ensure we still have standard keys for compatibility.
     record = {
         "User": st.session_state.current_user,
         "EntryID": uuid.uuid4().hex,
-        "Timestamp": current_sri_lanka_time,
-        "Item Name": selected_item
+        "Timestamp": dynamic_record.get("Timestamp", sri_time),
+        "Date": dynamic_record.get("Date", date_value if date_value else sri_date),
+        "Machine": dynamic_record.get("Machine", machine_value),
+        "Shift": dynamic_record.get("Shift", shift_value),
+        "Team": dynamic_record.get("Team", team_value),
+        "Item": item_value,
+        "Comments": comments
     }
+    # merge dynamic_record into record (dynamic values will overwrite defaults if present)
+    for k, v in dynamic_record.items():
+        record[k] = v
 
-    for _, row in filtered_config.iterrows():
-        subtopic = str(row["Subtopic"]).strip()
-        dropdown_flag = str(row["Dropdown or Not"]).strip().lower() == "yes"
-
-        # --- Auto Timestamp ---
-        if subtopic.lower() == "timestamp":
-            st.text_input(subtopic, value=current_sri_lanka_time, disabled=True, key=f"subtopic_{subtopic}")
-            record[subtopic] = current_sri_lanka_time
-            continue
-
-        # --- Auto Date ---
-        if subtopic.lower() == "date":
-            st.text_input(subtopic, value=current_date, disabled=True, key=f"subtopic_{subtopic}")
-            record[subtopic] = current_date
-            continue
-
-        # --- Dropdown or Free Text ---
-        if dropdown_flag:
-            options = [opt.strip() for opt in str(row["Dropdown Options"]).split(",") if opt.strip()]
-            if options:
-                record[subtopic] = st.selectbox(subtopic, [""] + options, key=f"subtopic_{subtopic}")
-            else:
-                record[subtopic] = st.text_input(subtopic, key=f"subtopic_{subtopic}")
+    # Legacy numeric fields might also be present in record from dynamic_record
+    # if they were not present, ensure the keys exist if user used the legacy inputs
+    if "Target_Quantity" not in record and 'target_quantity' in st.session_state:
+        record["Target_Quantity"] = st.session_state.get('target_quantity', "")
+    if "Actual_Quantity" not in record and 'actual_quantity' in st.session_state:
+        record["Actual_Quantity"] = st.session_state.get('actual_quantity', "")
+    if "Good_PCS_Quantity" not in record and 'good_pcs_quantity' in st.session_state:
+        record["Good_PCS_Quantity"] = st.session_state.get('good_pcs_quantity', "")
+    
+    # Save locally (do not sync automatically)
+    if st.button("Save Locally", key="submit_btn"):
+        # Validate: require non-empty values for most fields (Comments optional)
+        # Exclude Comments and allow zeros in numeric fields if intended
+        missing = []
+        for k, v in record.items():
+            if k == "Comments":
+                continue
+            # Accept 0 as valid for numeric entries; require non-empty for strings
+            if v == "" or v is None:
+                missing.append(k)
+        if missing:
+            st.error(f"Please fill required fields before saving. Missing: {', '.join(missing[:5])}")
         else:
-            record[subtopic] = st.text_input(subtopic, key=f"subtopic_{subtopic}")
+            try:
+                save_to_local('production', record)
+                st.success(f"Saved locally! EntryID: {record['EntryID']}")
+            except Exception as e:
+                st.error(f"Error saving data: {str(e)}")
 
-    # Comments
-    record["Comments"] = st.text_area("Comments", key="comments")
-
-    # --- Step 3: Save Locally (No Immediate Sync) ---
-    if st.button("Save Locally", key="save_local_btn"):
-        # Validate required fields except comments
-        if any(value == "" for key, value in record.items() if key not in ["Comments"]):
-            st.error("Please fill all required fields before saving.")
-        else:
-            save_to_local('production', record)
-            st.success(f"Record saved locally! EntryID: {record['EntryID']}")
-
-    # --- Step 4: Show Local Unsynced Data ---
+    # Display local entries (pending sync)
     production_data = st.session_state.get('die_casting_production', [])
     if production_data:
         st.subheader("Local Entries (Pending Sync)")
         try:
-            data_for_df = [r for r in production_data if isinstance(r, dict)]
+            # Convert to list of dictionaries first
+            data_for_df = []
+            for rec in production_data:
+                if isinstance(rec, dict):
+                    data_for_df.append(rec)
+                else:
+                    try:
+                        data_for_df.append(json.loads(rec))
+                    except:
+                        continue
+            
             if data_for_df:
                 local_df = pd.DataFrame(data_for_df)
-                st.dataframe(local_df.head(10))
+                display_cols = ["User", "Timestamp", "Date", "Machine", "Shift", "Item", "Target_Quantity", "Actual_Quantity", "Good_PCS_Quantity"]
+                available_cols = [col for col in display_cols if col in local_df.columns]
+                if available_cols:
+                    st.dataframe(local_df[available_cols].head(10))
+                else:
+                    # show full preview if those standard columns aren't present
+                    st.dataframe(local_df.head(10))
             else:
                 st.info("No valid production data available")
         except Exception as e:
-            st.error(f"Error displaying local data: {str(e)}")
+            st.error(f"Error displaying data: {str(e)}")
 
-    # --- Step 5: Sync Button to Push Data to Google Sheets ---
+    # Sync button at the bottom (manual)
     if st.button("🔄 Sync with Google Sheets Now"):
-        try:
-            ws_history = sh.worksheet("History")
-            history_values = ws_history.get_all_records()
-            history_df = pd.DataFrame(history_values)
-        except gspread.WorksheetNotFound:
-            st.warning("History sheet not found. Creating a new one.")
-            history_df = pd.DataFrame()
-
-        try:
-            # Loop through local records and append to Google Sheet
-            for local_record in production_data:
-                # Add missing columns dynamically
-                for key in local_record.keys():
-                    if key not in history_df.columns:
-                        history_df[key] = ""
-
-                # Append record
-                history_df = pd.concat([history_df, pd.DataFrame([local_record])], ignore_index=True)
-
-            # Update Google Sheet
-            ws_history.update([history_df.columns.values.tolist()] + history_df.values.tolist())
-
-            # Clear local after successful sync
-            st.session_state['die_casting_production'] = []
-            st.success("All local records successfully synced with Google Sheets!")
-
-        except Exception as e:
-            st.error(f"Error during sync: {str(e)}")
-
+        sync_with_google_sheets()
+        st.rerun()
 
 # ------------------ Quality UI ------------------
 def quality_ui():
@@ -792,8 +875,11 @@ def quality_ui():
     product = st.selectbox("Select Product", options=available_products, key="quality_product")
     
     # Quality fields
+    values = {}
+    
     col1, col2 = st.columns(2)
     
+    # In the quality_ui function, replace the values dictionary section:
     with col1:
         total_lot_qty = st.number_input("Total Lot Qty", min_value=1, step=1, key="total_lot_qty")
         sample_size = st.number_input("Sample Size", min_value=1, step=1, key="sample_size")
@@ -804,6 +890,8 @@ def quality_ui():
         results = st.text_input("Results", key="results")
         quality_inspector = st.text_input("Quality Inspector", value=st.session_state.current_user, key="quality_inspector")
         epf_number = st.text_input("EPF Number", key="epf_number")
+        
+        # Digital Signature
         st.write("Digital Signature:")
         digital_signature = st.text_input("Type your signature", key="digital_signature")
     
@@ -827,9 +915,24 @@ def quality_ui():
                 "Digital_Signature": digital_signature,
                 "Comments": comments
             }
+        
+        save_to_local('quality', record)
+        st.success(f"Quality data saved locally! Entry ID: {entry_id}")
+        
+        # Clear form after successful submission
+        st.rerun()
+            
+    except Exception as e:
+        st.error(f"Error saving quality data: {str(e)}")
+            
             save_to_local('quality', record)
             st.success(f"Quality data saved locally! Entry ID: {entry_id}")
-            st.rerun()
+            
+            # Try to sync in background
+            if st.button("🔄 Sync Quality Data with Google Sheets Now"):
+                sync_with_google_sheets()
+                st.rerun()
+                
         except Exception as e:
             st.error(f"Error saving quality data: {str(e)}")
     
@@ -840,6 +943,7 @@ def quality_ui():
     if quality_data:
         st.subheader("Local Quality Entries (Pending Sync)")
         try:
+            # Convert to list of dictionaries first
             data_for_df = []
             for record in quality_data:
                 if isinstance(record, dict):
@@ -865,7 +969,7 @@ def quality_ui():
             st.error(f"Error displaying quality data: {str(e)}")
             st.write(f"Debug error: {str(e)}")  # Debug line
 
-# ------------------ Downtime UI ------------------
+# ------------------ Downtime UI ------------------ (unchanged)
 def downtime_ui():
     st.subheader(f"Machine Downtime Entry - Technician: {st.session_state.current_user}")
     
@@ -1005,6 +1109,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
