@@ -155,15 +155,15 @@ if choice == "Production Team Login":
         else:
             st.error("❌ Incorrect password!")
 
-    if actual_password and entered_password == actual_password:
-    st.success(f"Welcome, {selected_user}!")
-
-    # Button to refresh Production Config from Google Sheet
-    if st.button("🔄 Refresh Production Config"):
-        st.experimental_rerun()  # This will reload the app and pull latest sheet data
+        if actual_password and entered_password == actual_password:
+        st.success(f"Welcome, {selected_user}!")
     
-    # Call the data entry function
-    production_data_entry()
+        # Button to refresh Production Config from Google Sheet
+        if st.button("🔄 Refresh Production Config"):
+            st.experimental_rerun()  # This will reload the app and pull latest sheet data
+        
+        # Call the data entry function
+        production_data_entry()
 
 # ------------------- SEND DATA TO GOOGLE SHEET -------------------
 if choice == "Production Team Login":
@@ -180,5 +180,6 @@ if choice == "Production Team Login":
             st.success("✅ All data sent to Google Sheet successfully!")
     else:
         st.info("No local data to send.")
+
 
 
