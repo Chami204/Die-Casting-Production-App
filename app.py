@@ -134,20 +134,26 @@ def data_entry(section, config_df, logged_user, local_key, history_sheet_name, i
 
     entry = {"User": logged_user, "DateTime": now}
 
+    # Product selection
     if include_product:
-        selected_product = st.selectbox(f"Select Product ({section})", config_df['Product'].unique(), key=f"{section}_product_{now}")
+        selected_product = st.selectbox(
+            f"Select Product ({section})",
+            config_df['Product'].unique(),
+            key=f"{section}_product"
+        )
         entry["Planned Item"] = selected_product
     elif planned_item:
         entry["Planned Item"] = planned_item
 
-    # Determine columns
+    # Columns for data entry
     if section.lower() == "downtime":
         subtopic_columns = [col for col in config_df.columns if col != "Product"]
     else:
         subtopic_columns = config_df["Subtopic"].tolist()
 
     for col_name in subtopic_columns:
-        widget_key = f"{section}_{col_name}_{now}"  # unique key for each widget
+        # Create a **stable key** per widget
+        widget_key = f"{section}_{col_name}"
         if section.lower() != "downtime" and str(config_df.loc[config_df['Subtopic'] == col_name, "Dropdown or Not"].values[0]).strip().lower() == "yes":
             options = str(config_df.loc[config_df['Subtopic'] == col_name, "Dropdown Options"].values[0]).split(",")
             entry[col_name] = st.selectbox(col_name, [opt.strip() for opt in options], key=widget_key)
@@ -157,13 +163,13 @@ def data_entry(section, config_df, logged_user, local_key, history_sheet_name, i
     # Buttons
     col1, col2, col3 = st.columns(3)
     with col1:
-        if st.button(f"💾 Save Locally ({section})", key=f"save_{section}_{now}"):
+        if st.button(f"💾 Save Locally ({section})", key=f"save_{section}"):
             save_locally(local_key, entry)
     with col2:
-        if st.button(f"📤 Sync to Google Sheet ({section})", key=f"sync_{section}_{now}"):
+        if st.button(f"📤 Sync to Google Sheet ({section})", key=f"sync_{section}"):
             sync_local_data_to_sheet(local_key, history_sheet_name)
     with col3:
-        if st.button(f"🔓 Logout ({section})", key=f"logout_{section}_{now}"):
+        if st.button(f"🔓 Logout ({section})", key=f"logout_{section}"):
             if section.lower() == "production":
                 st.session_state.prod_logged_in = False
                 st.session_state.logged_user = ""
@@ -279,5 +285,6 @@ elif choice == "Downtime Data Recordings":
         if not prod_config_df.empty:
             planned_item = st.selectbox("Select Planned Item", prod_config_df['Product'].unique(), key="downtime_planned_item")
         data_entry("Downtime", downtime_config_df, st.session_state.downtime_logged_user, "downtime_local_data", "Downtime_History", include_product=False, planned_item=planned_item)
+
 
 
