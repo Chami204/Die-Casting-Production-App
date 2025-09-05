@@ -417,25 +417,31 @@ elif choice == "Quality Team Login":
 # ------------------ DOWNTIME DATA RECORDINGS ------------------
 elif choice == "Downtime Data Recordings":
     st.header("🔑 Downtime Data Login")
+    
     if "downtime_logged_in" not in st.session_state:
         st.session_state.downtime_logged_in = False
-
+        st.session_state.downtime_logged_user = ""
+    
     if not st.session_state.downtime_logged_in:
-        entered_user = st.text_input("Enter your name")
-        entered_password = st.text_input("Enter Password", type="password")
-
+        entered_user = st.text_input("Enter your name", key="downtime_user")
+        entered_password = st.text_input("Enter Password", type="password", key="downtime_pass")
+        
         col1, col2 = st.columns([1,1])
         with col1:
-            if st.button("Login"):
-                if entered_password == DOWNTIME_SHARED_PASSWORD:
+            if st.button("Login", key="downtime_login_btn"):
+                if entered_password == DOWNTIME_SHARED_PASSWORD and entered_user.strip() != "":
                     st.session_state.downtime_logged_in = True
-                    st.session_state.downtime_logged_user = entered_user
-                    st.success(f"Welcome, {entered_user}!")
+                    st.session_state.downtime_logged_user = entered_user.strip()
+                    st.success(f"Welcome, {st.session_state.downtime_logged_user}!")
                 else:
-                    st.error("❌ Incorrect password!")
+                    st.error("❌ Incorrect password or empty username!")
         with col2:
-            st.button("Logout", on_click=lambda: st.session_state.update({"downtime_logged_in": False, "downtime_logged_user": ""}))
+            st.button("Logout", key="downtime_logout_btn", on_click=lambda: st.session_state.update({
+                "downtime_logged_in": False,
+                "downtime_logged_user": ""
+            }))
     else:
+        # Logged in: Show data entry
         if st.button("🔄 Refresh Downtime Config Data"):
             st.session_state.downtime_config_df = read_sheet(sheet, DOWNTIME_CONFIG_SHEET)
             st.session_state.production_config_df = read_sheet(sheet, PRODUCTION_CONFIG_SHEET)
@@ -445,3 +451,4 @@ elif choice == "Downtime Data Recordings":
 
         if st.button("📤 Sync Downtime Data to Google Sheet"):
             sync_downtime_to_google_sheet()
+
