@@ -97,27 +97,28 @@ def save_to_local(data_type, record):
             st.error("Invalid record format")
             return
             
-        # Get current data - ensure it's always a list of dictionaries
+        # Get current data - ensure it's always a list
         key = f"die_casting_{data_type}"
         current_data = st.session_state.get(key, [])
         
-        # Make sure current_data is a list, not a string, and contains only dictionaries
+        # Make sure current_data is a list
         if not isinstance(current_data, list):
             current_data = []
-        else:
-            # Filter out any non-dictionary items
-            current_data = [item for item in current_data if isinstance(item, dict)]
         
         # Add new record
         current_data.append(record)
         
-        # Save back to session state and local storage
+        # Save back to session state
         st.session_state[key] = current_data
+        
+        # Save to local storage
         save_to_local_storage(data_type, current_data)
         
         # Mark as pending sync
         st.session_state.die_casting_pending_sync = True
         save_to_local_storage('pending_sync', True)
+        
+        st.success("Data saved locally successfully!")
         
     except Exception as e:
         st.error(f"Error saving data locally: {str(e)}")
@@ -737,6 +738,11 @@ def production_ui():
 def quality_ui():
     st.subheader(f"Quality Data Entry - Inspector: {st.session_state.current_user}")
     
+    # Debug info
+    if st.checkbox("Show debug info"):
+        st.write("Session state keys:", list(st.session_state.keys()))
+        st.write("die_casting_quality:", st.session_state.get('die_casting_quality', 'Not found'))
+    
     # Refresh button at the top
     col1, col2 = st.columns([3, 1])
     with col1:
@@ -769,21 +775,21 @@ def quality_ui():
     
     col1, col2 = st.columns(2)
     
+    # In the quality_ui function, replace the values dictionary section:
     with col1:
-        values["Total_Lot_Qty"] = st.number_input("Total Lot Qty", min_value=1, step=1, key="total_lot_qty")
-        values["Sample_Size"] = st.number_input("Sample Size", min_value=1, step=1, key="sample_size")
-        values["AQL_Level"] = st.text_input("AQL Level", key="aql_level")
-        values["Accept_Reject"] = st.selectbox("Accept/Reject", options=["Accept", "Reject"], key="accept_reject")
+        total_lot_qty = st.number_input("Total Lot Qty", min_value=1, step=1, key="total_lot_qty")
+        sample_size = st.number_input("Sample Size", min_value=1, step=1, key="sample_size")
+        aql_level = st.text_input("AQL Level", key="aql_level")
+        accept_reject = st.selectbox("Accept/Reject", options=["Accept", "Reject"], key="accept_reject")
     
     with col2:
-        values["Results"] = st.text_input("Results", key="results")
-        values["Quality_Inspector"] = st.text_input("Quality Inspector", value=st.session_state.current_user, key="quality_inspector")
-        values["EPF_Number"] = st.text_input("EPF Number", key="epf_number")
+        results = st.text_input("Results", key="results")
+        quality_inspector = st.text_input("Quality Inspector", value=st.session_state.current_user, key="quality_inspector")
+        epf_number = st.text_input("EPF Number", key="epf_number")
         
         # Digital Signature
         st.write("Digital Signature:")
-        signature = st.text_input("Type your signature", key="digital_signature")
-        values["Digital_Signature"] = signature
+        digital_signature = st.text_input("Type your signature", key="digital_signature")
     
     comments = st.text_area("Additional Comments", key="quality_comments")
     
@@ -795,9 +801,25 @@ def quality_ui():
                 "EntryID": entry_id,
                 "Timestamp": get_sri_lanka_time(),
                 "Product": product,
-                **values,
+                "Total_Lot_Qty": total_lot_qty,
+                "Sample_Size": sample_size,
+                "AQL_Level": aql_level,
+                "Accept_Reject": accept_reject,
+                "Results": results,
+                "Quality_Inspector": quality_inspector,
+                "EPF_Number": epf_number,
+                "Digital_Signature": digital_signature,
                 "Comments": comments
             }
+        
+        save_to_local('quality', record)
+        st.success(f"Quality data saved locally! Entry ID: {entry_id}")
+        
+        # Clear form after successful submission
+        st.rerun()
+            
+    except Exception as e:
+        st.error(f"Error saving quality data: {str(e)}")
             
             save_to_local('quality', record)
             st.success(f"Quality data saved locally! Entry ID: {entry_id}")
@@ -812,6 +834,8 @@ def quality_ui():
     
     # Display local quality entries
     quality_data = st.session_state.get('die_casting_quality', [])
+    st.write(f"Debug: Quality data length = {len(quality_data)}")  # Debug line
+    
     if quality_data:
         st.subheader("Local Quality Entries (Pending Sync)")
         try:
@@ -820,8 +844,11 @@ def quality_ui():
             for record in quality_data:
                 if isinstance(record, dict):
                     data_for_df.append(record)
+                else:
+                    st.write(f"Debug: Found non-dict record: {type(record)} - {record}")  # Debug line
             
             if data_for_df:
+                st.write(f"Debug: Valid records found: {len(data_for_df)}")  # Debug line
                 local_df = pd.DataFrame(data_for_df)
                 display_cols = ["User", "Timestamp", "Product", "Total_Lot_Qty", "Sample_Size", 
                                "AQL_Level", "Accept_Reject", "Results"]
@@ -830,10 +857,13 @@ def quality_ui():
                     st.dataframe(local_df[available_cols].head(10))
                 else:
                     st.info("No displayable quality data available")
+                    st.write(f"Debug: Available columns: {list(local_df.columns)}")  # Debug line
             else:
                 st.info("No valid quality data available")
+                st.write("Debug: data_for_df is empty")  # Debug line
         except Exception as e:
             st.error(f"Error displaying quality data: {str(e)}")
+            st.write(f"Debug error: {str(e)}")  # Debug line
 
 # ------------------ Downtime UI ------------------
 def downtime_ui():
@@ -975,6 +1005,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
