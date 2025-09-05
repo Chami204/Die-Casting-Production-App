@@ -691,7 +691,7 @@ def production_ui():
     
     # Column 1 - standard fields
     with col1:
-        date_value = st.text_input("Date", value=sri_date, key="date_field")
+        date_value = st.text_input("Date & Time", value=sri_time, key="date_field")
         machine_value = st.selectbox("Machine", options=machines, key="machine_field")
         shift_value = st.selectbox("Shift", options=["Day", "Night"], key="shift_field")
         team_value = st.selectbox("Team", options=["A", "B", "C"], key="team_field")
@@ -1059,5 +1059,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
