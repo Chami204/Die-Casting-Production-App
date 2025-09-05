@@ -21,6 +21,7 @@ USER_CREDENTIALS = {
 
 # ------------------ GOOGLE SHEET CONNECTION ------------------
 def get_gs_client():
+    """Authenticate and return Google Sheets client."""
     try:
         if 'gcp_service_account' not in st.secrets:
             st.error("Google Service Account credentials not found in secrets.")
@@ -51,13 +52,18 @@ def get_gs_client():
         return None
 
 def get_gsheet_data(sheet_name):
+    """Open a Google Sheet."""
     client = get_gs_client()
     if client:
-        return client.open(sheet_name)
-    else:
-        return None
+        try:
+            return client.open(sheet_name)
+        except Exception as e:
+            st.error(f"Error opening Google Sheet: {str(e)}")
+            return None
+    return None
 
 def read_sheet(sheet, worksheet_name):
+    """Read a specific worksheet into a DataFrame."""
     try:
         worksheet = sheet.worksheet(worksheet_name)
         data = worksheet.get_all_records()
@@ -68,36 +74,48 @@ def read_sheet(sheet, worksheet_name):
 
 # ------------------ LOCAL SAVE ------------------
 def save_locally(data):
+    """Save data temporarily in session state."""
     if "local_storage" not in st.session_state:
         st.session_state.local_storage = []
     st.session_state.local_storage.append(data)
-    st.success("Data saved locally!")
+    st.success("✅ Data saved locally!")
 
 # ------------------ LOAD CONFIG DATA ------------------
 def load_production_config(force_refresh=False):
-    """Load Production Config data. Refresh only when requested."""
+    """Load Production Config data only when needed or manually refreshed."""
     if "production_config_df" not in st.session_state or force_refresh:
         sheet = get_gsheet_data(SHEET_NAME)
-        st.session_state.production_config_df = read_sheet(sheet, PRODUCTION_CONFIG_SHEET)
-        st.success("Production Config data refreshed!")
+        if sheet:
+            st.session_state.production_config_df = read_sheet(sheet, PRODUCTION_CONFIG_SHEET)
+            if not st.session_state.production_config_df.empty:
+                st.success("✅ Production Config data loaded successfully!")
+            else:
+                st.error("⚠️ No data found in Production_Config sheet!")
+        else:
+            st.error("❌ Unable to load Google Sheet.")
 
 # ------------------ PRODUCTION DATA ENTRY ------------------
 def production_data_entry():
-    production_config_df = st.session_state.production_config_df
+    """Main form for production data entry."""
+    production_config_df = st.session_state.get("production_config_df", pd.DataFrame())
 
     if production_config_df.empty:
-        st.error("⚠️ No data found in Production_Config sheet!")
+        st.error("⚠️ No data found in Production_Config sheet! Please refresh or check Google Sheet.")
         return
 
     st.subheader("Please Enter the Production Data")
 
     # Product dropdown
-    products = production_config_df['Product'].unique().tolist()
+    products = production_config_df['Product'].dropna().unique().tolist()
+    if not products:
+        st.error("⚠️ No products available in config data!")
+        return
+
     selected_product = st.selectbox("Select Product", products)
 
     # Show current date/time
     now = datetime.now(SRI_LANKA_TZ).strftime(TIME_FORMAT)
-    st.write(f"📅 Date & Time: {now}")
+    st.write(f"📅 Date & Time: **{now}**")
 
     # Filter subtopics for selected product
     subtopics_df = production_config_df[production_config_df['Product'] == selected_product]
@@ -105,13 +123,15 @@ def production_data_entry():
     production_entry = {"Product": selected_product, "DateTime": now}
 
     for idx, row in subtopics_df.iterrows():
-        if str(row["Dropdown or Not"]).strip().lower() == "yes":
-            options = [opt.strip() for opt in str(row["Dropdown Options"]).split(",")]
-            production_entry[row["Subtopic"]] = st.selectbox(row["Subtopic"], options, key=row["Subtopic"])
+        subtopic = row["Subtopic"]
+        if str(row.get("Dropdown or Not", "")).strip().lower() == "yes":
+            options = [opt.strip() for opt in str(row.get("Dropdown Options", "")).split(",") if opt.strip()]
+            production_entry[subtopic] = st.selectbox(subtopic, options, key=f"{subtopic}_{idx}")
         else:
-            production_entry[row["Subtopic"]] = st.text_input(row["Subtopic"], key=row["Subtopic"])
+            production_entry[subtopic] = st.text_input(subtopic, key=f"{subtopic}_{idx}")
 
-    if st.button("Save Locally"):
+    # Save button
+    if st.button("💾 Save Locally"):
         save_locally(production_entry)
 
 # ------------------ MAIN APP ------------------
@@ -121,6 +141,7 @@ st.title(APP_TITLE)
 menu = ["Home", "Production Team Login", "Quality Team Login", "Downtime Data Recordings"]
 choice = st.sidebar.selectbox("Menu", menu)
 
+# ------------------ HOME ------------------
 if choice == "Home":
     st.markdown("<h2 style='text-align: center;'>Welcome to Die Casting Production App</h2>", unsafe_allow_html=True)
     st.markdown("<h4 style='text-align: center;'>Please select a section to continue</h4>", unsafe_allow_html=True)
@@ -133,28 +154,30 @@ elif choice == "Production Team Login":
     selected_user = st.selectbox("Select Username", usernames)
     entered_password = st.text_input("Enter Password", type="password")
 
-    if st.button("Login"):
+    if st.button("Login", key="login_btn"):
         actual_password = USER_CREDENTIALS.get(selected_user)
         if actual_password and entered_password == actual_password:
+            st.session_state.logged_in = True
+            st.session_state.current_user = selected_user
             st.success(f"Welcome, {selected_user}!")
 
-            # Load data initially
+    # If user is logged in
+    if st.session_state.get("logged_in", False):
+        # Load data initially if not already loaded
+        if "production_config_df" not in st.session_state:
             load_production_config()
 
-            # Manual Refresh Button
-            if st.button("🔄 Refresh Production Config Data"):
-                load_production_config(force_refresh=True)
+        # Manual Refresh Button
+        if st.button("🔄 Refresh Production Config Data", key="refresh_btn"):
+            load_production_config(force_refresh=True)
 
-            # Show production entry form
-            production_data_entry()
-        else:
-            st.error("❌ Incorrect password!")
+        # Show production entry form
+        production_data_entry()
 
 # ------------------ QUALITY TEAM LOGIN ------------------
 elif choice == "Quality Team Login":
-    st.header("Quality Team Login (Coming Soon...)")
+    st.header("🧪 Quality Team Login (Coming Soon...)")
 
 # ------------------ DOWNTIME DATA RECORDINGS ------------------
 elif choice == "Downtime Data Recordings":
-    st.header("Downtime Data Recordings (Coming Soon...)")
-
+    st.header("⏱️ Downtime Data Recordings (Coming Soon...)")
