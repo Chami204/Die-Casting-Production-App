@@ -743,9 +743,6 @@ def production_ui():
         "EntryID": uuid.uuid4().hex,
         "Timestamp": dynamic_record.get("Timestamp", sri_time),
         "Date": dynamic_record.get("Date", date_value if date_value else sri_time),
-        "Machine": dynamic_record.get("Machine", machine_value),
-        "Shift": dynamic_record.get("Shift", shift_value),
-        "Team": dynamic_record.get("Team", team_value),
         "Item": item_value,
         "Comments": comments
     }
@@ -1050,6 +1047,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
