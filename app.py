@@ -5,124 +5,27 @@ from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 import pytz
-import time
-import threading
-from functools import lru_cache
-import json
 
 # ------------------ Settings ------------------
 APP_TITLE = "Die Casting Production"
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 SRI_LANKA_TZ = pytz.timezone('Asia/Colombo')
 DEFAULT_SUBTOPICS = [
-    "Date",
-    "Machine", 
-    "Shift",
-    "Team",
-    "Item",
-    "Target_Quantity",
-    "Actual_Quantity",
-    "Slow_shot_Count",
-    "Reject_Quantity",
-    "Good_PCS_Quantity"
+    "Input number of pcs",
+    "Input time",
+    "Output number of pcs",
+    "Output time",
+    "Num of pcs to rework",
+    "Number of rejects"
 ]
 
-# Quality section password
-QUALITY_PASSWORD = "quality123"
-
-# Quality default fields
-QUALITY_DEFAULT_FIELDS = [
-    "Total_Lot_Qty",
-    "Sample_Size", 
-    "AQL_Level",
-    "Accept_Reject",
-    "Results",
-    "Quality_Inspector",
-    "EPF_Number",
-    "Digital_Signature"
-]
-# Downtime section password
-DOWNTIME_PASSWORD = "downtime123"
-
-# Downtime default fields
-DOWNTIME_DEFAULT_FIELDS = [
-    "Machine",
-    "Shift",
-    "Team", 
-    "Planned_Item",
-    "Breakdown_Reason",
-    "Duration_Mins"
-]
-
-# ------------------ Local Storage Helpers ------------------
-def save_to_local_storage(data_type, data):
-    """Save data to browser's local storage"""
-    try:
-        key = f"die_casting_{data_type}"
-        json_data = json.dumps(data)
-        st.session_state[key] = json_data
-    except Exception as e:
-        st.error(f"Error saving to local storage: {str(e)}")
-
-def load_from_local_storage(data_type, default=None):
-    """Load data from browser's local storage"""
-    try:
-        key = f"die_casting_{data_type}"
-        if key in st.session_state:
-            loaded_data = st.session_state[key]
-            # Check if it's a JSON string and parse it
-            if isinstance(loaded_data, str):
-                return json.loads(loaded_data)
-            else:
-                return loaded_data
-    except Exception as e:
-        st.error(f"Error loading from local storage: {str(e)}")
-    return default if default is not None else []
-
-def clear_local_storage(data_type):
-    """Clear data from local storage"""
-    try:
-        key = f"die_casting_{data_type}"
-        if key in st.session_state:
-            del st.session_state[key]
-    except:
-        pass
-
-# ------------------ Local Data Management ------------------
-def save_to_local(data_type, record):
-    """Save data to local storage"""
-    try:
-        # Ensure record is a dictionary
-        if not isinstance(record, dict):
-            st.error("Invalid record format")
-            return
-            
-        # Get current data - ensure it's always a list
-        key = f"die_casting_{data_type}"
-        current_data = st.session_state.get(key, [])
-        
-        # Make sure current_data is a list
-        if not isinstance(current_data, list):
-            current_data = []
-        
-        # Add new record
-        current_data.append(record)
-        
-        # Save back to session state
-        st.session_state[key] = current_data
-        
-        # Save to local storage
-        save_to_local_storage(data_type, current_data)
-        
-        # Mark as pending sync
-        st.session_state.die_casting_pending_sync = True
-        save_to_local_storage('pending_sync', True)
-        
-        st.success("Data saved locally successfully!")
-        
-    except Exception as e:
-        st.error(f"Error saving data locally: {str(e)}")
-        
+# User credentials (in a real app, these should be stored securely)
+USERS = {
+    "Production": "prod123",
+    "Quality": "quality123", 
+    "Downtime": "downtime123",
+    "Admin": "admin123"
+}
 
 # ------------------ Initialize Session State ------------------
 if 'cfg' not in st.session_state:
@@ -135,20 +38,6 @@ if 'current_user' not in st.session_state:
     st.session_state.current_user = None
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
-if 'user_role' not in st.session_state:
-    st.session_state.user_role = ""
-if 'sheet_initialized' not in st.session_state:
-    st.session_state.sheet_initialized = False
-
-# Initialize local data from storage
-if 'die_casting_production' not in st.session_state:
-    st.session_state.die_casting_production = load_from_local_storage('production', [])
-if 'die_casting_quality' not in st.session_state:
-    st.session_state.die_casting_quality = load_from_local_storage('quality', [])
-if 'die_casting_downtime' not in st.session_state:
-    st.session_state.die_casting_downtime = load_from_local_storage('downtime', [])
-if 'die_casting_pending_sync' not in st.session_state:
-    st.session_state.die_casting_pending_sync = load_from_local_storage('pending_sync', False)
 
 # ------------------ Helper Functions ------------------
 def get_sri_lanka_time():
@@ -156,18 +45,17 @@ def get_sri_lanka_time():
     return datetime.now(SRI_LANKA_TZ).strftime(TIME_FORMAT)
 
 def should_refresh_config():
-    """Check if config should be refreshed with longer interval"""
+    """Check if config should be refreshed (every 5 seconds)"""
     if st.session_state.last_config_update is None:
         return True
-    # Increased to 2 minutes to reduce API calls
-    return (datetime.now() - st.session_state.last_config_update).total_seconds() > 120
+    return (datetime.now() - st.session_state.last_config_update).total_seconds() > 5
 
 # ------------------ Google Sheets ------------------
 def get_gs_client():
     try:
         if 'gcp_service_account' not in st.secrets:
             st.error("Google Service Account credentials not found in secrets.")
-            return None
+            st.stop()
             
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
@@ -191,284 +79,172 @@ def get_gs_client():
         return gspread.authorize(creds)
     except Exception as e:
         st.error(f"Failed to authenticate with Google Sheets: {str(e)}")
-        return None
+        st.stop()
 
-def initialize_google_sheets():
-    """Initialize Google Sheets connection only when needed"""
-    if st.session_state.sheet_initialized:
-        return True
-        
+def open_spreadsheet(client):
     try:
-        client = get_gs_client()
-        if client is None:
-            return False
-            
         name = st.secrets["gsheet"]["spreadsheet_name"]
-        sh = client.open(name)
-        
-        # Try to access a sheet to test connection
-        try:
-            sh.worksheet("Production_Config")
-            st.session_state.sheet_initialized = True
-            return True
-        except:
-            st.warning("Google Sheets not fully accessible. Working in offline mode.")
-            return False
+        return client.open(name)
     except Exception as e:
-        st.warning(f"Google Sheets connection issue: {str(e)}. Working in offline mode.")
-        return False
+        st.error(f"Error opening spreadsheet: {str(e)}")
+        st.stop()
 
-def read_downtime_config():
-    """Read downtime configuration from Google Sheets"""
+def ensure_worksheets(sh):
+    # Production Config sheet
     try:
-        if initialize_google_sheets():
-            client = get_gs_client()
-            name = st.secrets["gsheet"]["spreadsheet_name"]
-            sh = client.open(name)
-            ws_downtime_config = sh.worksheet("Downtime_Config")
-            
-            values = ws_downtime_config.get_all_records()
-            machines = []
-            breakdown_reasons = []
-            
-            for row in values:
-                machine = str(row.get("Machine", "")).strip()
-                reason = str(row.get("Breakdown_Reason", "")).strip()
-                
-                if machine:
-                    machines.append(machine)
-                if reason:
-                    breakdown_reasons.append(reason)
-            
-            return {
-                "machines": list(set(machines)),
-                "breakdown_reasons": list(set(breakdown_reasons))
-            }
-    except Exception as e:
-        st.warning(f"Could not load downtime config: {str(e)}")
-    
-    # Return default values if cannot connect
-    return {
-        "machines": ["Machine 1", "Machine 2", "Machine 3"],
-        "breakdown_reasons": ["Electrical Fault", "Mechanical Failure", "Maintenance", "Material Issue"]
-    }
+        ws_config = sh.worksheet("Production_Config")
+    except gspread.WorksheetNotFound:
+        ws_config = sh.add_worksheet(title="Production_Config", rows=1000, cols=2)
+        rows = [["Product", "Subtopic"]]
+        ws_config.update("A1", rows)
+        ws_config.freeze(rows=1)
 
-def ensure_google_sheets():
-    """Ensure all required Google Sheets exist"""
+    # History sheet
     try:
-        client = get_gs_client()
-        if client is None:
-            return False
-            
-        name = st.secrets["gsheet"]["spreadsheet_name"]
-        sh = client.open(name)
-        
-        # List of sheets to ensure exist
-        sheets_to_create = [
-            ("Production_Config", [["Product", "Subtopic"]]),
-            ("Quality_Config", [["Field", "Type"]]),
-            ("Downtime_Config", [["Machine", "Breakdown_Reason"]]),
-            ("User_Credentials", [["Username", "Password", "Role"]]),
-            ("History", [["User", "EntryID", "Timestamp", "Comments"] + DEFAULT_SUBTOPICS]),  # Updated this line
-            ("Quality_History", [["User", "EntryID", "Timestamp", "Product"] + QUALITY_DEFAULT_FIELDS]),
-            ("Downtime_History", [["User", "EntryID", "Timestamp"] + DOWNTIME_DEFAULT_FIELDS + ["Comments"]])
-        ]
-        
-        for sheet_name, headers in sheets_to_create:
-            try:
-                sh.worksheet(sheet_name)
-            except gspread.WorksheetNotFound:
-                worksheet = sh.add_worksheet(title=sheet_name, rows=1000, cols=20)
-                worksheet.update("A1", headers)
-                worksheet.freeze(rows=1)
-                time.sleep(1)  # Delay between sheet creations
-        
-        return True
-        
-    except Exception as e:
-        st.warning(f"Could not ensure Google Sheets: {str(e)}")
-        return False
+        ws_history = sh.worksheet("History")
+    except gspread.WorksheetNotFound:
+        ws_history = sh.add_worksheet(title = "History", rows=2000, cols=50)
+        headers = ["EntryID", "Timestamp", "User", "Product", "Comments"] + DEFAULT_SUBTOPICS
+        ws_history.update("A1", [headers])
+        ws_history.freeze(rows=1)
+
+    return ws_config, ws_history
 
 # ------------------ Config helpers ------------------
-def get_default_config():
-    """Return default configuration for offline use"""
-    return {
-        "Product1": DEFAULT_SUBTOPICS.copy(),
-        "Product2": DEFAULT_SUBTOPICS.copy()
-    }
-
-def refresh_config_if_needed():
-    """Refresh config from Google Sheets if needed and available"""
-    if should_refresh_config() and initialize_google_sheets():
-        try:
-            client = get_gs_client()
-            if client:
-                name = st.secrets["gsheet"]["spreadsheet_name"]
-                sh = client.open(name)
-                ws_config = sh.worksheet("Production_Config")
-                
-                values = ws_config.get_all_records()
-                cfg = {}
-                for row in values:
-                    p = str(row.get("Product", "")).strip()
-                    s = str(row.get("Subtopic", "")).strip()
-                    if not p or not s:
-                        continue
-                    cfg.setdefault(p, []).append(s)
-                
-                if cfg:
-                    st.session_state.cfg = cfg
-                    st.session_state.last_config_update = datetime.now()
-                    return True
-        except Exception as e:
-            # Silently fail - we'll use offline config
-            pass
-    
-    # Ensure we always have some config
-    if not st.session_state.cfg:
-        st.session_state.cfg = get_default_config()
-    
-    return False
-
-# ------------------ Local Data Management ------------------
-def save_to_local(data_type, record):
-    """Save data to local storage"""
+def read_config(ws_config):
     try:
-        # Ensure record is a dictionary
-        if not isinstance(record, dict):
-            st.error("Invalid record format")
-            return
-            
-        # Get current data - ensure it's always a list
-        key = f"die_casting_{data_type}"
-        current_data = st.session_state.get(key, [])
+        values = ws_config.get_all_records()
+        cfg = {}
+        for row in values:
+            p = str(row.get("Product", "")).strip()
+            s = str(row.get("Subtopic", "")).strip()
+            if not p or not s:
+                continue
+            cfg.setdefault(p, []).append(s)
+        return cfg
+    except Exception as e:
+        st.error(f"Error reading config: {str(e)}")
+        return {}
+
+def write_config(ws_config, cfg: dict):
+    try:
+        rows = [["Product", "Subtopic"]]
+        for product, subs in cfg.items():
+            for s in subs:
+                rows.append([product, s])
+        ws_config.clear()
+        ws_config.update("A1", rows)
+        ws_config.freeze(rows=1)
+        return True
+    except Exception as e:
+        st.error(f"Error writing config: {str(e)}")
+        return False
+
+def add_product_with_default_subtopics(ws_config, product_name):
+    """Add a new product with all default subtopics"""
+    if not product_name.strip():
+        return False, "Product name cannot be empty"
+    
+    if product_name in st.session_state.cfg:
+        return False, "Product already exists"
+    
+    # Add the product with all default subtopics
+    st.session_state.cfg[product_name] = DEFAULT_SUBTOPICS.copy()
+    
+    # Update the Google Sheet
+    if write_config(ws_config, st.session_state.cfg):
+        return True, f"Product '{product_name}' created with default subtopics"
+    else:
+        return False, "Failed to update Google Sheets"
+
+def refresh_config_if_needed(ws_config):
+    """Refresh config from Google Sheets if needed"""
+    if should_refresh_config():
+        new_cfg = read_config(ws_config)
+        if new_cfg != st.session_state.cfg:
+            st.session_state.cfg = new_cfg
+        st.session_state.last_config_update = datetime.now()
+
+# ------------------ History helpers ------------------
+def ensure_history_headers(ws_history, product):
+    current_subtopics = st.session_state.cfg.get(product, DEFAULT_SUBTOPICS.copy())
+    headers = ws_history.row_values(1)
+    needed_headers = ["EntryID", "Timestamp", "User", "Product", "Comments"] + current_subtopics
+    
+    if set(headers) != set(needed_headers):
+        ws_history.update("A1", [needed_headers])
+        ws_history.freeze(rows=1)
+    return needed_headers
+
+def append_history(ws_history, record: dict):
+    headers = ensure_history_headers(ws_history, record["Product"])
+    row = [record.get(h, "") for h in headers]
+    ws_history.append_row(row, value_input_option="USER_ENTERED")
+
+def get_recent_entries(ws_history, product: str, limit: int = 50) -> pd.DataFrame:
+    try:
+        values = ws_history.get_all_records()
+        if not values:
+            return pd.DataFrame()
+        df = pd.DataFrame(values)
+        if "Product" in df.columns:
+            df = df[df["Product"] == product]
+        return df.sort_values(by="Timestamp", ascending=False).head(limit)
+    except Exception as e:
+        st.error(f"Error loading history: {str(e)}")
+        return pd.DataFrame()
+
+def update_entry(ws_history, entry_id: str, updated_data: dict):
+    """Update an existing entry in the history sheet"""
+    try:
+        # Find the row with the matching EntryID
+        cell = ws_history.find(entry_id)
+        if not cell:
+            st.error("Entry not found.")
+            return False
         
-        # Make sure current_data is a list, not a string
-        if not isinstance(current_data, list):
-            current_data = []
+        # Get current headers
+        headers = ws_history.row_values(1)
         
-        # Add new record
-        current_data.append(record)
+        # Prepare the updated row
+        updated_row = []
+        for header in headers:
+            if header in updated_data:
+                updated_row.append(updated_data[header])
+            else:
+                # Get the existing value for this header
+                existing_value = ws_history.cell(cell.row, headers.index(header) + 1).value
+                updated_row.append(existing_value)
         
-        # Save back to session state and local storage
-        st.session_state[key] = current_data
-        save_to_local_storage(data_type, current_data)
-        
-        # Mark as pending sync
-        st.session_state.die_casting_pending_sync = True
-        save_to_local_storage('pending_sync', True)
+        # Update the row
+        ws_history.update(f"A{cell.row}", [updated_row], value_input_option="USER_ENTERED")
+        return True
         
     except Exception as e:
-        st.error(f"Error saving data locally: {str(e)}")
+        st.error(f"Error updating entry: {str(e)}")
+        return False
 
-def sync_with_google_sheets():
-    """Sync local data with Google Sheets when connection is available"""
-    if not st.session_state.get('die_casting_pending_sync', False):
-        st.info("No data pending sync")
-        return
-    
-    if not initialize_google_sheets():
-        st.warning("Cannot connect to Google Sheets")
-        return
-        
+def find_entry_by_id(ws_history, entry_id: str) -> dict:
+    """Find an entry by its ID and return as dictionary"""
     try:
-        client = get_gs_client()
-        if client is None:
-            return
-            
-        name = st.secrets["gsheet"]["spreadsheet_name"]
-        sh = client.open(name)
+        cell = ws_history.find(entry_id)
+        if not cell:
+            return None
         
-        # Sync production data
-        sync_count = 0
-        production_data = st.session_state.get('die_casting_production', [])
-        if production_data:
-            try:
-                ws_history = sh.worksheet("History")
-                for record in production_data:
-                    # Ensure record is a dictionary, not a string
-                    if isinstance(record, str):
-                        try:
-                            record = json.loads(record)
-                        except:
-                            continue
-                    
-                    if isinstance(record, dict):
-                        headers = ["User", "EntryID", "Timestamp", "Comments"] + DEFAULT_SUBTOPICS
-                        row = [record.get(h, "") for h in headers]
-                        ws_history.append_row(row, value_input_option="USER_ENTERED")
-                        sync_count += 1
-                        time.sleep(1)  # Delay between writes
-            except Exception as e:
-                st.error(f"Error syncing production data: {str(e)}")
+        headers = ws_history.row_values(1)
+        row_values = ws_history.row_values(cell.row)
         
-        # Sync quality data
-        quality_data = st.session_state.get('die_casting_quality', [])
-        if quality_data:
-            try:
-                ws_quality_history = sh.worksheet("Quality_History")
-                for record in quality_data:
-                    # Ensure record is a dictionary, not a string
-                    if isinstance(record, str):
-                        try:
-                            record = json.loads(record)
-                        except:
-                            continue
-                    
-                    if isinstance(record, dict):
-                        headers = ["User", "EntryID", "Timestamp", "Product"] + QUALITY_DEFAULT_FIELDS
-                        row = [record.get(h, "") for h in headers]
-                        ws_quality_history.append_row(row, value_input_option="USER_ENTERED")
-                        sync_count += 1
-                        time.sleep(1)  # Delay between writes
-            except Exception as e:
-                st.error(f"Error syncing quality data: {str(e)}")
+        entry_data = {}
+        for i, header in enumerate(headers):
+            if i < len(row_values):
+                entry_data[header] = row_values[i]
+            else:
+                entry_data[header] = ""
         
-        # Sync downtime data
-        downtime_data = st.session_state.get('die_casting_downtime', [])
-        if downtime_data:
-            try:
-                ws_downtime_history = sh.worksheet("Downtime_History")
-                for record in downtime_data:
-                    # Ensure record is a dictionary, not a string
-                    if isinstance(record, str):
-                        try:
-                            record = json.loads(record)
-                        except:
-                            continue
-                    
-                    if isinstance(record, dict):
-                        headers = ["User", "EntryID", "Timestamp"] + DOWNTIME_DEFAULT_FIELDS + ["Comments"]
-                        row = [record.get(h, "") for h in headers]
-                        ws_downtime_history.append_row(row, value_input_option="USER_ENTERED")
-                        sync_count += 1
-                        time.sleep(1)  # Delay between writes
-            except Exception as e:
-                st.error(f"Error syncing downtime data: {str(e)}")
-        
-        if sync_count > 0:
-            # Clear synced data from local storage
-            st.session_state.die_casting_production = []
-            st.session_state.die_casting_quality = []
-            st.session_state.die_casting_downtime = []
-            st.session_state.die_casting_pending_sync = False
-            
-            # Clear from browser storage
-            clear_local_storage('production')
-            clear_local_storage('quality')
-            clear_local_storage('downtime')
-            clear_local_storage('pending_sync')
-            
-            st.success(f"Successfully synced {sync_count} records with Google Sheets!")
-            
-            # Also refresh config after sync
-            st.session_state.last_config_update = None
-            refresh_config_if_needed()
-        else:
-            st.info("No data needed syncing")
-        
+        return entry_data
     except Exception as e:
-        st.warning(f"Sync failed: {str(e)}. Data remains saved locally.")
+        st.error(f"Error finding entry: {str(e)}")
+        return None
 
 # ------------------ Login System ------------------
 def login_system():
@@ -479,110 +255,51 @@ def login_system():
         if st.sidebar.button("Logout"):
             st.session_state.logged_in = False
             st.session_state.current_user = None
-            st.session_state.user_role = ""
             st.rerun()
         return True
     
-    # Read users from sheet for production login
-    users = {}
-    try:
-        if initialize_google_sheets():
-            client = get_gs_client()
-            if client:
-                name = st.secrets["gsheet"]["spreadsheet_name"]
-                sh = client.open(name)
-                ws_users = sh.worksheet("User_Credentials")
-                user_records = ws_users.get_all_records()
-                
-                for row in user_records:
-                    username = str(row.get("Username", "")).strip()
-                    password = str(row.get("Password", "")).strip()
-                    role = str(row.get("Role", "")).strip()
-                    if username and password:
-                        users[username] = {
-                            "password": password,
-                            "role": role
-                        }
-    except Exception as e:
-        st.sidebar.warning("Could not load user list from Google Sheets")
+    username = st.sidebar.selectbox("Select User", options=[""] + list(USERS.keys()))
+    password = st.sidebar.text_input("Password", type="password")
     
-    # Regular user login section - CHANGED TO DROPDOWN
-    st.sidebar.subheader("Production Login")
-    
-    if users:
-        username = st.sidebar.selectbox("Select User", options=[""] + list(users.keys()), key="prod_username")
-        password = st.sidebar.text_input("Password", type="password", key="prod_password")
-        
-        if st.sidebar.button("Production Login"):
-            if username in users and users[username]["password"] == password:
-                st.session_state.logged_in = True
-                st.session_state.current_user = username
-                st.session_state.user_role = users[username].get("role", "Production")
-                st.sidebar.success("Login successful!")
-                st.rerun()
-            else:
-                st.sidebar.error("Invalid username or password")
-    else:
-        username = st.sidebar.text_input("Username", key="prod_username")
-        password = st.sidebar.text_input("Password", type="password", key="prod_password")
-        
-        if st.sidebar.button("Production Login"):
-            if username and password:
-                st.session_state.logged_in = True
-                st.session_state.current_user = username
-                st.session_state.user_role = "Production"
-                st.sidebar.success("Login successful!")
-                st.rerun()
-            else:
-                st.sidebar.error("Please enter username and password")
-    
-    # Downtime login section
-    st.sidebar.subheader("Downtime Login")
-    downtime_username = st.sidebar.text_input("Downtime Username", key="downtime_username")
-    downtime_password = st.sidebar.text_input("Downtime Password", type="password", key="downtime_password")
-    
-    if st.sidebar.button("Downtime Login"):
-        if downtime_password == DOWNTIME_PASSWORD and downtime_username:
+    if st.sidebar.button("Login"):
+        if username in USERS and USERS[username] == password:
             st.session_state.logged_in = True
-            st.session_state.current_user = downtime_username
-            st.session_state.user_role = "Downtime"
-            st.sidebar.success("Downtime login successful!")
+            st.session_state.current_user = username
+            st.sidebar.success("Login successful!")
             st.rerun()
         else:
-            st.sidebar.error("Invalid downtime credentials")
+            st.sidebar.error("Invalid username or password")
     
-    # Quality login section
-    st.sidebar.subheader("Quality Login")
-    quality_username = st.sidebar.text_input("Quality Username", key="quality_username")
-    quality_password = st.sidebar.text_input("Quality Password", type="password", key="quality_password")
-    
-    if st.sidebar.button("Quality Login"):
-        if quality_password == QUALITY_PASSWORD and quality_username:
-            st.session_state.logged_in = True
-            st.session_state.current_user = quality_username
-            st.session_state.user_role = "Quality"
-            st.sidebar.success("Quality login successful!")
-            st.rerun()
-        else:
-            st.sidebar.error("Invalid quality credentials")
-            
     return st.session_state.logged_in
 
 # ------------------ Admin UI ------------------
-def admin_ui():
+def admin_ui(ws_config):
     st.subheader("Admin Panel - Manage Products")
     
-    refresh_config_if_needed()
+    # Auto-refresh config to see changes from other devices
+    refresh_config_if_needed(ws_config)
 
-    st.info("""
-    **Offline Mode Active**
-    - Product configuration changes should be made directly in Google Sheets
-    - The app will sync when the connection is available
-    - Current products are loaded from local cache
-    """)
-    
+    # Create new product
+    with st.expander("Create New Product"):
+        new_product = st.text_input("New Product Name", key="new_product")
+        if st.button("Create Product"):
+            success, message = add_product_with_default_subtopics(ws_config, new_product)
+            if success:
+                st.success(message)
+                st.rerun()
+            else:
+                st.error(message)
+
     # Display current configuration
+    st.divider()
     st.subheader("Current Products Configuration")
+    st.info("""
+    Instructions:
+    1. To add a product: Use the form above or edit the 'Production_Config' sheet directly
+    2. When adding directly to Google Sheets: Add only the product name in column A
+    3. The app will automatically add all default subtopics when it detects a new product
+    4. Click 'Refresh Configuration' to sync changes
+    """)
     
     if st.session_state.cfg:
         for product, subtopics in st.session_state.cfg.items():
@@ -592,397 +309,129 @@ def admin_ui():
                     st.write(f"- {subtopic}")
     else:
         st.info("No products configured yet.")
-
-    # Manual refresh button with cooldown
-    if st.button("🔄 Refresh Configuration from Google Sheets"):
+    
+    # Manual refresh button
+    if st.button("🔄 Refresh Configuration"):
         st.session_state.last_config_update = None
-        if refresh_config_if_needed():
-            st.success("Configuration refreshed from Google Sheets!")
-        else:
-            st.warning("Could not connect to Google Sheets")
         st.rerun()
 
 # ------------------ Production UI ------------------
-def production_ui():
-    st.subheader(f"Production Data Entry - User: {st.session_state.current_user}")
+def production_ui(ws_config, ws_history):
+    st.subheader("Production Data Entry")
     
-    # Refresh button at the top
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.write("")  # Spacer
-    with col2:
-        if st.button("🔄 Refresh Data", key="prod_refresh_btn"):
-            st.session_state.last_config_update = None
-            if refresh_config_if_needed():
-                st.success("Data refreshed from Google Sheets!")
-            else:
-                st.warning("Using local data cache")
-            st.rerun()
+    # Manual refresh button
+    if st.button("🔄 Refresh Data"):
+        refresh_config_if_needed(ws_config)
+        st.rerun()
+
+    # Auto-refresh config to get latest changes
+    refresh_config_if_needed(ws_config)
     
-    refresh_config_if_needed()
-    
-    # Read downtime configuration for machines
-    downtime_config = read_downtime_config()
-    machines = downtime_config["machines"]
-    
-    # Read available products from production config
-    available_products = list(st.session_state.cfg.keys())
-    
-    if not available_products:
-        st.info("No products available yet.")
+    if not st.session_state.cfg:
+        st.info("No products available yet. Ask Admin to create a product.")
         return
 
+    product = st.selectbox("Select Product", sorted(st.session_state.cfg.keys()), key="user_product")
+    current_subtopics = st.session_state.cfg.get(product, DEFAULT_SUBTOPICS.copy())
+    
     st.write("Fill **all fields** below:")
+    values = {}
     
-    col1, col2 = st.columns(2)
+    # Generate dynamic form fields
+    for subtopic in current_subtopics:
+        if "number" in subtopic.lower() or "num" in subtopic.lower() or "rejects" in subtopic.lower():
+            values[subtopic] = st.number_input(subtopic, min_value=0, step=1, key=f"num_{subtopic}")
+        elif "time" in subtopic.lower():
+            values[subtopic] = st.text_input(subtopic, value=get_sri_lanka_time(), key=f"time_{subtopic}")
+        else:
+            values[subtopic] = st.text_input(subtopic, key=f"text_{subtopic}")
     
-    with col1:
-        # Date field (auto-filled with current date)
-        current_date = datetime.now(SRI_LANKA_TZ).strftime("%Y-%m-%d")
-        date_value = st.text_input("Date", value=current_date, key="date_field")
-        
-        # Machine dropdown
-        machine_value = st.selectbox("Machine", options=machines, key="machine_field")
-        
-        # Shift dropdown
-        shift_value = st.selectbox("Shift", options=["Day", "Night"], key="shift_field")
-        
-        # Team dropdown
-        team_value = st.selectbox("Team", options=["A", "B", "C"], key="team_field")
-        
-        # Item dropdown (from Production_Config)
-        item_value = st.selectbox("Item", options=available_products, key="item_field")
-    
-    with col2:
-        # Target Quantity (cannot be 0)
-        target_quantity = st.number_input("Target Quantity", min_value=1, step=1, key="target_quantity")
-        
-        # Actual Quantity (cannot be 0)
-        actual_quantity = st.number_input("Actual Quantity", min_value=1, step=1, key="actual_quantity")
-        
-        # Slow shot Count (can be 0)
-        slow_shot_count = st.number_input("Slow shot Count", min_value=0, step=1, key="slow_shot_count")
-        
-        # Reject Quantity (can be 0)
-        reject_quantity = st.number_input("Reject Quantity", min_value=0, step=1, key="reject_quantity")
-        
-        # Good PCS Quantity (manually entered)
-        good_pcs_quantity = st.number_input("Good PCS Quantity", min_value=0, step=1, key="good_pcs_quantity")
-
     comments = st.text_area("Comments", key="comments")
 
     if st.button("Submit", key="submit_btn"):
-        # Validate required fields
-        if target_quantity == 0:
-            st.error("Target Quantity cannot be zero")
-        elif actual_quantity == 0:
-            st.error("Actual Quantity cannot be zero")
-        elif good_pcs_quantity == 0:
-            st.error("Good PCS Quantity cannot be zero")
-            pass
+        # Validate required numeric fields
+        required_fields = [st for st in current_subtopics if "number" in st.lower() or "num" in st.lower()]
+        missing_fields = [f for f in required_fields if not values.get(f, 0)]
+        
+        if missing_fields:
+            st.error(f"Please fill in all required fields: {', '.join(missing_fields)}")
         else:
             try:
                 entry_id = uuid.uuid4().hex
                 record = {
-                    "User": st.session_state.current_user,
                     "EntryID": entry_id,
                     "Timestamp": get_sri_lanka_time(),
-                    "Date": date_value,
-                    "Machine": machine_value,
-                    "Shift": shift_value,
-                    "Team": team_value,
-                    "Item": item_value,
-                    "Target_Quantity": target_quantity,
-                    "Actual_Quantity": actual_quantity,
-                    "Slow_shot_Count": slow_shot_count,
-                    "Reject_Quantity": reject_quantity,
-                    "Good_PCS_Quantity": good_pcs_quantity,
+                    "User": st.session_state.current_user,
+                    "Product": product,
+                    **values,
                     "Comments": comments
                 }
-                save_to_local('production', record)
-                st.success(f"Saved locally! EntryID: {entry_id}")
-                
+                append_history(ws_history, record)
+                st.success(f"Saved! EntryID: {entry_id}")
             except Exception as e:
                 st.error(f"Error saving data: {str(e)}")
 
-    # Display local entries
-    production_data = st.session_state.get('die_casting_production', [])
-    if production_data:
-        st.subheader("Local Entries (Pending Sync)")
-        try:
-            # Convert to list of dictionaries first
-            data_for_df = []
-            for record in production_data:
-                if isinstance(record, dict):
-                    data_for_df.append(record)
-            
-            if data_for_df:
-                local_df = pd.DataFrame(data_for_df)
-                display_cols = ["User", "Timestamp", "Date", "Machine", "Shift", "Item", "Target_Quantity", "Actual_Quantity", "Good_PCS_Quantity"]
-                available_cols = [col for col in display_cols if col in local_df.columns]
-                if available_cols:
-                    st.dataframe(local_df[available_cols].head(10))
-                else:
-                    st.info("No displayable data available")
-            else:
-                st.info("No valid production data available")
-        except Exception as e:
-            st.error(f"Error displaying data: {str(e)}")
-
-    # Sync button at the bottom
-    if st.button("🔄 Sync with Google Sheets Now"):
-        sync_with_google_sheets()
-        st.rerun()
+    # Display recent entries
+    df = get_recent_entries(ws_history, product)
+    if not df.empty:
+        st.subheader("Recent Entries (for this product)")
+        st.dataframe(df[["Timestamp", "User", "Product"] + current_subtopics + ["Comments"]].head(10))
+    else:
+        st.caption("No entries yet for this product.")
 
 # ------------------ Quality UI ------------------
 def quality_ui():
-    st.subheader(f"Quality Data Entry - Inspector: {st.session_state.current_user}")
-    
-    # Debug info
-    if st.checkbox("Show debug info"):
-        st.write("Session state keys:", list(st.session_state.keys()))
-        st.write("die_casting_quality:", st.session_state.get('die_casting_quality', 'Not found'))
-    
-    # Refresh button at the top
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.write("")  # Spacer
-    with col2:
-        if st.button("🔄 Refresh Products", key="quality_refresh_btn"):
-            st.session_state.last_config_update = None
-            if refresh_config_if_needed():
-                st.success("Products refreshed from Google Sheets!")
-            else:
-                st.warning("Using local product cache")
-            st.rerun()
-    
-    refresh_config_if_needed()
-    
-    # Read available products from production config
-    available_products = list(st.session_state.cfg.keys())
-    
-    if not available_products:
-        st.error("No products available.")
-        return
-    
-    st.write("Fill all quality inspection details below:")
-    
-    # Product selection
-    product = st.selectbox("Select Product", options=available_products, key="quality_product")
-    
-    # Quality fields
-    values = {}
-    
-    col1, col2 = st.columns(2)
-    
-    # In the quality_ui function, replace the values dictionary section:
-    with col1:
-        total_lot_qty = st.number_input("Total Lot Qty", min_value=1, step=1, key="total_lot_qty")
-        sample_size = st.number_input("Sample Size", min_value=1, step=1, key="sample_size")
-        aql_level = st.text_input("AQL Level", key="aql_level")
-        accept_reject = st.selectbox("Accept/Reject", options=["Accept", "Reject"], key="accept_reject")
-    
-    with col2:
-        results = st.text_input("Results", key="results")
-        quality_inspector = st.text_input("Quality Inspector", value=st.session_state.current_user, key="quality_inspector")
-        epf_number = st.text_input("EPF Number", key="epf_number")
-        
-        # Digital Signature
-        st.write("Digital Signature:")
-        digital_signature = st.text_input("Type your signature", key="digital_signature")
-    
-    comments = st.text_area("Additional Comments", key="quality_comments")
-    
-    if st.button("Submit Quality Data", key="submit_quality_btn"):
-        try:
-            entry_id = uuid.uuid4().hex
-            record = {
-                "User": st.session_state.current_user,
-                "EntryID": entry_id,
-                "Timestamp": get_sri_lanka_time(),
-                "Product": product,
-                "Total_Lot_Qty": total_lot_qty,
-                "Sample_Size": sample_size,
-                "AQL_Level": aql_level,
-                "Accept_Reject": accept_reject,
-                "Results": results,
-                "Quality_Inspector": quality_inspector,
-                "EPF_Number": epf_number,
-                "Digital_Signature": digital_signature,
-                "Comments": comments
-            }
-    
-            # Save locally
-            save_to_local('quality', record)
-            st.success(f"Quality data saved locally! Entry ID: {entry_id}")
-    
-            # Clear form after successful submission
-            st.rerun()
-    
-        except Exception as e:
-            st.error(f"Error saving quality data: {str(e)}")
-
-            
-            save_to_local('quality', record)
-            st.success(f"Quality data saved locally! Entry ID: {entry_id}")
-            
-            # Try to sync in background
-            if st.button("🔄 Sync Quality Data with Google Sheets Now"):
-                sync_with_google_sheets()
-                st.rerun()
-                
-        except Exception as e:
-            st.error(f"Error saving quality data: {str(e)}")
-    
-    # Display local quality entries
-    quality_data = st.session_state.get('die_casting_quality', [])
-    st.write(f"Debug: Quality data length = {len(quality_data)}")  # Debug line
-    
-    if quality_data:
-        st.subheader("Local Quality Entries (Pending Sync)")
-        try:
-            # Convert to list of dictionaries first
-            data_for_df = []
-            for record in quality_data:
-                if isinstance(record, dict):
-                    data_for_df.append(record)
-                else:
-                    st.write(f"Debug: Found non-dict record: {type(record)} - {record}")  # Debug line
-            
-            if data_for_df:
-                st.write(f"Debug: Valid records found: {len(data_for_df)}")  # Debug line
-                local_df = pd.DataFrame(data_for_df)
-                display_cols = ["User", "Timestamp", "Product", "Total_Lot_Qty", "Sample_Size", 
-                               "AQL_Level", "Accept_Reject", "Results"]
-                available_cols = [col for col in display_cols if col in local_df.columns]
-                if available_cols:
-                    st.dataframe(local_df[available_cols].head(10))
-                else:
-                    st.info("No displayable quality data available")
-                    st.write(f"Debug: Available columns: {list(local_df.columns)}")  # Debug line
-            else:
-                st.info("No valid quality data available")
-                st.write("Debug: data_for_df is empty")  # Debug line
-        except Exception as e:
-            st.error(f"Error displaying quality data: {str(e)}")
-            st.write(f"Debug error: {str(e)}")  # Debug line
+    st.subheader("Quality Module - Coming Soon")
+    st.info("Quality module will be implemented in the next update")
+    st.write("Planned features:")
+    st.write("- Quality inspections recording")
+    st.write("- Defect tracking")
+    st.write("- Quality reports")
 
 # ------------------ Downtime UI ------------------
 def downtime_ui():
-    st.subheader(f"Machine Downtime Entry - Technician: {st.session_state.current_user}")
-    
-    # Refresh button at the top
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.write("")  # Spacer
-    with col2:
-        if st.button("🔄 Refresh Data", key="downtime_refresh_btn"):
-            st.session_state.last_config_update = None
-            if refresh_config_if_needed():
-                st.success("Data refreshed from Google Sheets!")
-            else:
-                st.warning("Using local data cache")
-            st.rerun()
-    
-    refresh_config_if_needed()
-    
-    # Read downtime configuration
-    downtime_config = read_downtime_config()
-    machines = downtime_config["machines"]
-    breakdown_reasons = downtime_config["breakdown_reasons"]
-    
-    # Read available products from production config
-    available_products = list(st.session_state.cfg.keys())
-    
-    if not available_products:
-        st.error("No products available. Please ask admin to add products first.")
-        return
-    
-    st.write("Fill all machine downtime details below:")
-    
-    # Current time and date
-    current_time = get_sri_lanka_time()
-    st.write(f"**Current Time (Sri Lanka):** {current_time}")
-    
-    # Downtime fields
-    values = {}
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        values["Machine"] = st.selectbox("Machine", options=machines, key="downtime_machine")
-        values["Shift"] = st.selectbox("Shift", options=["Night", "Day"], key="downtime_shift")
-        values["Team"] = st.selectbox("Team", options=["A", "B", "C"], key="downtime_team")
-    
-    with col2:
-        values["Planned_Item"] = st.selectbox("Planned Item", options=available_products, key="downtime_planned_item")
-        values["Breakdown_Reason"] = st.selectbox("Breakdown Reason", options=breakdown_reasons, key="downtime_reason")
-        values["Duration_Mins"] = st.number_input("Duration (Minutes)", min_value=1, step=1, key="downtime_duration")
-    
-    comments = st.text_area("Additional Comments", key="downtime_comments")
-    
-    if st.button("Submit Downtime Data", key="submit_downtime_btn"):
-        try:
-            entry_id = uuid.uuid4().hex
-            record = {
-                "User": st.session_state.current_user,
-                "EntryID": entry_id,
-                "Timestamp": current_time,
-                **values,
-                "Comments": comments
-            }
-            
-            save_to_local('downtime', record)
-            st.success(f"Downtime data saved locally! Entry ID: {entry_id}")
-            
-            # Try to sync in background
-            if st.button("🔄 Sync Downtime Data Now"):
-                sync_with_google_sheets()
-                st.rerun()
-                
-        except Exception as e:
-            st.error(f"Error saving downtime data: {str(e)}")
-    
-    # Display local downtime entries
-    downtime_data = st.session_state.get('die_casting_downtime', [])
-    if downtime_data:
-        st.subheader("Local Downtime Entries (Pending Sync)")
-        try:
-            # Convert to list of dictionaries first
-            data_for_df = []
-            for record in downtime_data:
-                if isinstance(record, dict):
-                    data_for_df.append(record)
-            
-            if data_for_df:
-                local_df = pd.DataFrame(data_for_df)
-                display_cols = ["User", "Timestamp", "Machine", "Shift", "Breakdown_Reason", "Duration_Mins"]
-                available_cols = [col for col in display_cols if col in local_df.columns]
-                if available_cols:
-                    st.dataframe(local_df[available_cols].head(10))
-                else:
-                    st.info("No displayable downtime data available")
-            else:
-                st.info("No valid downtime data available")
-        except Exception as e:
-            st.error(f"Error displaying downtime data: {str(e)}")
-            
+    st.subheader("Downtime Module - Coming Soon")
+    st.info("Downtime module will be implemented in the next update")
+    st.write("Planned features:")
+    st.write("- Machine downtime tracking")
+    st.write("- Reason categorization")
+    st.write("- Downtime analysis reports")
+
 # ------------------ Main ------------------
 def main():
     st.set_page_config(page_title=APP_TITLE, page_icon="🗂️", layout="wide")
     st.title(APP_TITLE)
 
-    # Show sync status
-    if st.session_state.get('die_casting_pending_sync', False):
-        st.warning("⚠️ Data pending sync with Google Sheets")
-        if st.button("🔄 Try to Sync Now"):
-            sync_with_google_sheets()
-            st.rerun()
-
     try:
-        # Initialize with default config if empty
+        client = get_gs_client()
+        sh = open_spreadsheet(client)
+        ws_config, ws_history = ensure_worksheets(sh)
+        
+        # Read config from Google Sheets at startup
         if not st.session_state.cfg:
-            st.session_state.cfg = get_default_config()
+            st.session_state.cfg = read_config(ws_config)
+            st.session_state.last_config_update = datetime.now()
+
+        # Check if there are products without subtopics and add default ones
+        products_in_sheet = set()
+        try:
+            records = ws_config.get_all_records()
+            for record in records:
+                product = str(record.get("Product", "")).strip()
+                if product:
+                    products_in_sheet.add(product)
+        except:
+            pass
+            
+        # Add default subtopics for any products that might be missing them
+        config_changed = False
+        for product in products_in_sheet:
+            if product not in st.session_state.cfg:
+                st.session_state.cfg[product] = DEFAULT_SUBTOPICS.copy()
+                config_changed = True
+                
+        if config_changed:
+            write_config(ws_config, st.session_state.cfg)
 
         # Login system
         if not login_system():
@@ -990,29 +439,17 @@ def main():
             return
 
         # Navigation based on user role
-        if st.session_state.user_role == "Admin":
-            admin_ui()
-        elif st.session_state.user_role == "Production":
-            production_ui()
-        elif st.session_state.user_role == "Quality":
+        if st.session_state.current_user == "Admin":
+            admin_ui(ws_config)
+        elif st.session_state.current_user == "Production":
+            production_ui(ws_config, ws_history)
+        elif st.session_state.current_user == "Quality":
             quality_ui()
-        elif st.session_state.user_role == "Downtime":
+        elif st.session_state.current_user == "Downtime":
             downtime_ui()
-        else:
-            # Default to production if role not specified
-            production_ui()
 
     except Exception as e:
         st.error(f"Application error: {str(e)}")
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
