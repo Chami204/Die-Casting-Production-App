@@ -94,32 +94,47 @@ def sync_local_data_to_sheet(local_key, history_sheet_name):
     if not client:
         st.error("Cannot connect to Google Sheets!")
         return
+
     try:
         ws = client.open(SHEET_NAME).worksheet(history_sheet_name)
     except gspread.exceptions.WorksheetNotFound:
         st.error(f"Worksheet '{history_sheet_name}' not found!")
         return
 
-    # Get existing sheet headers
+    # Get existing headers
     existing_cols = ws.row_values(1) if ws.row_values(1) else []
-    all_keys = set(existing_cols)
+    
+    # Ensure User, Product, DateTime are first
+    mandatory_cols = ["User", "Product", "DateTime"]
+    other_existing_cols = [col for col in existing_cols if col not in mandatory_cols]
+    
+    # Collect new columns from local data
+    new_cols = set()
     for entry in st.session_state[local_key]:
-        all_keys.update(entry.keys())
-    all_keys = list(all_keys)
-
-    # Ensure User, Product, DateTime are first columns
-    ordered_cols = ["User", "Product", "DateTime"] + [col for col in all_keys if col not in ["User", "Product", "DateTime"]]
-    ws.update('1:1', [ordered_cols])
-
-    # Prepare rows
+        for k in entry.keys():
+            if k not in mandatory_cols and k not in other_existing_cols:
+                new_cols.add(k)
+    new_cols = list(new_cols)
+    
+    # Final column order
+    final_cols = mandatory_cols + other_existing_cols + new_cols
+    
+    # Update header row only if columns changed
+    if final_cols != existing_cols:
+        ws.update('1:1', [final_cols])
+    
+    # Prepare rows to append
     rows_to_append = []
     for entry in st.session_state[local_key]:
-        row = [entry.get(col, "") for col in ordered_cols]
+        row = [entry.get(col, "") for col in final_cols]
         rows_to_append.append(row)
 
     ws.append_rows(rows_to_append, value_input_option="USER_ENTERED")
+    
+    # Clear local storage
     st.session_state[local_key] = []
     st.success(f"✅ {len(rows_to_append)} records synced to {history_sheet_name}!")
+
 
 # ------------------ DATA ENTRY FUNCTIONS ------------------
 def production_data_entry(logged_user):
@@ -302,3 +317,4 @@ else:
                 st.experimental_rerun()
             else:
                 st.error("❌ Incorrect password!")
+
