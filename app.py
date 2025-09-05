@@ -101,6 +101,9 @@ def sync_to_google_sheet():
         # Convert local data to DataFrame
         df_local = pd.DataFrame(st.session_state.local_storage)
 
+        # ✅ Replace NaN or None with empty strings to avoid JSON errors
+        df_local = df_local.fillna("")
+
         # Ensure headers match
         existing_data = history_ws.get_all_records()
         if existing_data:
@@ -122,6 +125,7 @@ def sync_to_google_sheet():
 
     except Exception as e:
         st.error(f"Error syncing data: {str(e)}")
+
 
 # ------------------ LOAD CONFIG DATA ------------------
 def load_production_config(force_refresh=False):
@@ -228,4 +232,5 @@ elif choice == "Quality Team Login":
 # ------------------ DOWNTIME DATA RECORDINGS ------------------
 elif choice == "Downtime Data Recordings":
     st.header("⏱️ Downtime Data Recordings (Coming Soon...)")
+
 
