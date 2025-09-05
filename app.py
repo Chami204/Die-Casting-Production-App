@@ -652,11 +652,7 @@ def production_ui():
     # Try to refresh config (non-blocking)
     refresh_config_if_needed()
     
-    # Read downtime configuration for machines
-    downtime_config = read_downtime_config()
-    machines = downtime_config["machines"]
-    
-    # Read production configuration directly from sheet (for dynamic subtopics)
+    # Read production configuration directly from sheet
     config_df = pd.DataFrame()
     try:
         if initialize_google_sheets():
@@ -672,9 +668,9 @@ def production_ui():
     except Exception:
         config_df = pd.DataFrame()
     
-    # Determine available items (Item Name) either from config_df or from st.session_state.cfg fallback
-    if not config_df.empty and "Item Name" in config_df.columns:
-        available_items = list(config_df["Item Name"].dropna().unique())
+    # Determine available items
+    if not config_df.empty and "Product" in config_df.columns:
+        available_items = list(config_df["Product"].dropna().unique())
     else:
         available_items = list(st.session_state.cfg.keys())
     
@@ -686,21 +682,17 @@ def production_ui():
     
     col1, col2 = st.columns(2)
     
-    # Prepare current time/date
-    sri_time = get_sri_lanka_time()  # e.g., "2025-09-05 08:00:00"
-    
+    # Column 1 - Date & Time, Item
+    sri_time = get_sri_lanka_time()
     with col1:
-        # Date & Time field
         date_value = st.text_input("Date & Time", value=sri_time, key="date_field")
-        
-        # Item dropdown (from Production_Config or cfg)
         item_value = st.selectbox("Item", options=available_items, key="item_field")
     
-    # Column 2 - dynamic subtopics
+    # Column 2 - dynamic subtopics (from Production_Config) + legacy numeric fields
     dynamic_record = {}
     with col2:
-        if not config_df.empty and "Item Name" in config_df.columns and item_value:
-            filtered = config_df[config_df["Item Name"] == item_value]
+        if not config_df.empty and "Product" in config_df.columns and item_value:
+            filtered = config_df[config_df["Product"] == item_value]
             for idx, row in filtered.iterrows():
                 subtopic = str(row.get("Subtopic", "")).strip()
                 dropdown_flag = str(row.get("Dropdown or Not", "")).strip().lower() == "yes"
@@ -746,7 +738,6 @@ def production_ui():
         "Item": item_value,
         "Comments": comments
     }
-    # Merge dynamic_record into record
     record.update(dynamic_record)
 
     # Save locally
@@ -769,7 +760,7 @@ def production_ui():
             data_for_df = [rec if isinstance(rec, dict) else json.loads(rec) for rec in production_data]
             if data_for_df:
                 local_df = pd.DataFrame(data_for_df)
-                display_cols = ["User", "Timestamp", "Date", "Machine", "Shift", "Item", 
+                display_cols = ["User", "Timestamp", "Date", "Item", 
                                 "Target_Quantity", "Actual_Quantity", "Good_PCS_Quantity"]
                 available_cols = [col for col in display_cols if col in local_df.columns]
                 st.dataframe(local_df[available_cols].head(10) if available_cols else local_df.head(10))
@@ -782,7 +773,6 @@ def production_ui():
     if st.button("🔄 Sync with Google Sheets Now"):
         sync_with_google_sheets()
         st.rerun()
-
 
 
 # ------------------ Quality UI ------------------
@@ -1047,6 +1037,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
