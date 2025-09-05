@@ -811,15 +811,17 @@ def quality_ui():
                 "Digital_Signature": digital_signature,
                 "Comments": comments
             }
-        
-        save_to_local('quality', record)
-        st.success(f"Quality data saved locally! Entry ID: {entry_id}")
-        
-        # Clear form after successful submission
-        st.rerun()
-            
-    except Exception as e:
-        st.error(f"Error saving quality data: {str(e)}")
+    
+            # Save locally
+            save_to_local('quality', record)
+            st.success(f"Quality data saved locally! Entry ID: {entry_id}")
+    
+            # Clear form after successful submission
+            st.rerun()
+    
+        except Exception as e:
+            st.error(f"Error saving quality data: {str(e)}")
+
             
             save_to_local('quality', record)
             st.success(f"Quality data saved locally! Entry ID: {entry_id}")
@@ -1005,6 +1007,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
