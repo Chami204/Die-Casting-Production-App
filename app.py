@@ -9,7 +9,6 @@ import time
 import threading
 from functools import lru_cache
 import json
-import numpy as np
 
 # ------------------ Settings ------------------
 APP_TITLE = "Die Casting Production"
@@ -59,20 +58,8 @@ DOWNTIME_DEFAULT_FIELDS = [
 def save_to_local_storage(data_type, data):
     """Save data to browser's local storage"""
     try:
-        # Convert int64 to regular int for JSON serialization
-        def convert_int64(obj):
-            if isinstance(obj, np.integer):
-                return int(obj)
-            elif isinstance(obj, list):
-                return [convert_int64(item) for item in obj]
-            elif isinstance(obj, dict):
-                return {k: convert_int64(v) for k, v in obj.items()}
-            return obj
-        
-        converted_data = convert_int64(data)
-        
         key = f"die_casting_{data_type}"
-        json_data = json.dumps(converted_data)
+        json_data = json.dumps(data)
         st.session_state[key] = json_data
     except Exception as e:
         st.error(f"Error saving to local storage: {str(e)}")
@@ -110,17 +97,6 @@ def save_to_local(data_type, record):
             st.error("Invalid record format")
             return
             
-        # Convert int64 values to regular int for JSON serialization
-        converted_record = {}
-        for key, value in record.items():
-            if hasattr(value, 'dtype'):  # Check if it's a numpy type
-                if np.issubdtype(value.dtype, np.integer):
-                    converted_record[key] = int(value)
-                else:
-                    converted_record[key] = value
-            else:
-                converted_record[key] = value
-            
         # Get current data - ensure it's always a list
         key = f"die_casting_{data_type}"
         current_data = st.session_state.get(key, [])
@@ -130,7 +106,7 @@ def save_to_local(data_type, record):
             current_data = []
         
         # Add new record
-        current_data.append(converted_record)
+        current_data.append(record)
         
         # Save back to session state
         st.session_state[key] = current_data
@@ -355,6 +331,36 @@ def refresh_config_if_needed():
     return False
 
 # ------------------ Local Data Management ------------------
+def save_to_local(data_type, record):
+    """Save data to local storage"""
+    try:
+        # Ensure record is a dictionary
+        if not isinstance(record, dict):
+            st.error("Invalid record format")
+            return
+            
+        # Get current data - ensure it's always a list
+        key = f"die_casting_{data_type}"
+        current_data = st.session_state.get(key, [])
+        
+        # Make sure current_data is a list, not a string
+        if not isinstance(current_data, list):
+            current_data = []
+        
+        # Add new record
+        current_data.append(record)
+        
+        # Save back to session state and local storage
+        st.session_state[key] = current_data
+        save_to_local_storage(data_type, current_data)
+        
+        # Mark as pending sync
+        st.session_state.die_casting_pending_sync = True
+        save_to_local_storage('pending_sync', True)
+        
+    except Exception as e:
+        st.error(f"Error saving data locally: {str(e)}")
+
 def sync_with_google_sheets():
     """Sync local data with Google Sheets when connection is available"""
     if not st.session_state.get('die_casting_pending_sync', False):
@@ -373,59 +379,30 @@ def sync_with_google_sheets():
         name = st.secrets["gsheet"]["spreadsheet_name"]
         sh = client.open(name)
         
-        # Sync production data (dynamic columns support)
+        # Sync production data
         sync_count = 0
         production_data = st.session_state.get('die_casting_production', [])
         if production_data:
             try:
-                # Load existing History sheet data (if exists)
-                try:
-                    ws_history = sh.worksheet("History")
-                    history_values = ws_history.get_all_records()
-                    history_df = pd.DataFrame(history_values)
-                except gspread.WorksheetNotFound:
-                    # Create empty DataFrame if history not found
-                    history_df = pd.DataFrame()
-
-                # Ensure history_df is a DataFrame with columns if empty
-                if history_df.empty:
-                    # Start with a minimal header set (preserve expected common headers)
-                    history_df = pd.DataFrame(columns=["User", "EntryID", "Timestamp", "Comments"] + DEFAULT_SUBTOPICS)
-
-                # For each local record, ensure its keys exist as columns, add if missing
+                ws_history = sh.worksheet("History")
                 for record in production_data:
-                    # If record stored as JSON string, try to parse
+                    # Ensure record is a dictionary, not a string
                     if isinstance(record, str):
                         try:
                             record = json.loads(record)
                         except:
                             continue
-
-                    if not isinstance(record, dict):
-                        continue
-
-                    # Add missing columns to history_df
-                    for k in record.keys():
-                        if k not in history_df.columns:
-                            history_df[k] = ""
-
-                    # Append this record as a new row (aligning with history_df columns)
-                    row = {col: record.get(col, "") for col in history_df.columns}
-                    history_df = pd.concat([history_df, pd.DataFrame([row])], ignore_index=True)
-                    sync_count += 1
-
-                # Write full updated history_df back to sheet (this updates headers too)
-                ws = None
-                try:
-                    ws = sh.worksheet("History")
-                except gspread.WorksheetNotFound:
-                    ws = sh.add_worksheet(title="History", rows=1000, cols=max(20, len(history_df.columns)))
-                # Convert dataframe to list of lists and update
-                ws.update([history_df.columns.values.tolist()] + history_df.values.tolist())
+                    
+                    if isinstance(record, dict):
+                        headers = ["User", "EntryID", "Timestamp", "Comments"] + DEFAULT_SUBTOPICS
+                        row = [record.get(h, "") for h in headers]
+                        ws_history.append_row(row, value_input_option="USER_ENTERED")
+                        sync_count += 1
+                        time.sleep(1)  # Delay between writes
             except Exception as e:
                 st.error(f"Error syncing production data: {str(e)}")
         
-        # Sync quality data (unchanged logic)
+        # Sync quality data
         quality_data = st.session_state.get('die_casting_quality', [])
         if quality_data:
             try:
@@ -642,32 +619,16 @@ def production_ui():
                 st.warning("Using local data cache")
             st.rerun()
     
-    # Try to refresh config (non-blocking)
     refresh_config_if_needed()
     
-    # Read production configuration directly from sheet
-    config_df = pd.DataFrame()
-    try:
-        if initialize_google_sheets():
-            client = get_gs_client()
-            name = st.secrets["gsheet"]["spreadsheet_name"]
-            sh = client.open(name)
-            try:
-                ws_config = sh.worksheet("Production_Config")
-                config_values = ws_config.get_all_records()
-                config_df = pd.DataFrame(config_values)
-            except Exception:
-                config_df = pd.DataFrame()
-    except Exception:
-        config_df = pd.DataFrame()
+    # Read downtime configuration for machines
+    downtime_config = read_downtime_config()
+    machines = downtime_config["machines"]
     
-    # Determine available items
-    if not config_df.empty and "Product" in config_df.columns:
-        available_items = list(config_df["Product"].dropna().unique())
-    else:
-        available_items = list(st.session_state.cfg.keys())
+    # Read available products from production config
+    available_products = list(st.session_state.cfg.keys())
     
-    if not available_items:
+    if not available_products:
         st.info("No products available yet.")
         return
 
@@ -675,118 +636,112 @@ def production_ui():
     
     col1, col2 = st.columns(2)
     
-    # Column 1 - Date & Time, Item
-    sri_time = get_sri_lanka_time()
     with col1:
-        date_value = st.text_input("Date & Time", value=sri_time, key="date_field")
-        item_value = st.selectbox("Item", options=available_items, key="item_field")
+        # Date field (auto-filled with current date)
+        current_date = datetime.now(SRI_LANKA_TZ).strftime("%Y-%m-%d")
+        date_value = st.text_input("Date", value=current_date, key="date_field")
+        
+        # Machine dropdown
+        machine_value = st.selectbox("Machine", options=machines, key="machine_field")
+        
+        # Shift dropdown
+        shift_value = st.selectbox("Shift", options=["Day", "Night"], key="shift_field")
+        
+        # Team dropdown
+        team_value = st.selectbox("Team", options=["A", "B", "C"], key="team_field")
+        
+        # Item dropdown (from Production_Config)
+        item_value = st.selectbox("Item", options=available_products, key="item_field")
     
-    # Column 2 - dynamic subtopics (from Production_Config) + legacy numeric fields
-    dynamic_record = {}
     with col2:
-        if not config_df.empty and "Product" in config_df.columns and item_value:
-            filtered = config_df[config_df["Product"] == item_value]
-            for idx, row in filtered.iterrows():
-                subtopic = str(row.get("Subtopic", "")).strip()
-                dropdown_flag = str(row.get("Dropdown or Not", "")).strip().lower() == "yes"
-                options_text = str(row.get("Dropdown Options", "")).strip()
-                
-                # Timestamp & Date auto-filled
-                if subtopic.lower() == "timestamp":
-                    st.text_input(subtopic, value=sri_time, disabled=True, key=f"dyn_{idx}_{subtopic}")
-                    dynamic_record[subtopic] = sri_time
-                    continue
-                if subtopic.lower() == "date":
-                    st.text_input(subtopic, value=sri_time, disabled=True, key=f"dyn_{idx}_{subtopic}")
-                    dynamic_record[subtopic] = sri_time
-                    continue
-                
-                # Dropdown or text input
-                if dropdown_flag:
-                    options = [opt.strip() for opt in options_text.split(",") if opt.strip()]
-                    dynamic_record[subtopic] = st.selectbox(subtopic, [""] + options, key=f"dyn_{idx}_{subtopic}")
-                else:
-                    dynamic_record[subtopic] = st.text_input(subtopic, key=f"dyn_{idx}_{subtopic}")
-        else:
-            # Legacy numeric fields if no config
-            target_quantity = int(st.number_input("Target Quantity", min_value=1, step=1, key="target_quantity"))
-            actual_quantity = int(st.number_input("Actual Quantity", min_value=1, step=1, key="actual_quantity"))
-            slow_shot_count = int(st.number_input("Slow shot Count", min_value=0, step=1, key="slow_shot_count"))
-            reject_quantity = int(st.number_input("Reject Quantity", min_value=0, step=1, key="reject_quantity"))
-            good_pcs_quantity = int(st.number_input("Good PCS Quantity", min_value=0, step=1, key="good_pcs_quantity"))
-            
-            dynamic_record["Target_Quantity"] = target_quantity
-            dynamic_record["Actual_Quantity"] = actual_quantity
-            dynamic_record["Slow_shot_Count"] = slow_shot_count
-            dynamic_record["Reject_Quantity"] = reject_quantity
-            dynamic_record["Good_PCS_Quantity"] = good_pcs_quantity
+        # Target Quantity (cannot be 0)
+        target_quantity = st.number_input("Target Quantity", min_value=1, step=1, key="target_quantity")
+        
+        # Actual Quantity (cannot be 0)
+        actual_quantity = st.number_input("Actual Quantity", min_value=1, step=1, key="actual_quantity")
+        
+        # Slow shot Count (can be 0)
+        slow_shot_count = st.number_input("Slow shot Count", min_value=0, step=1, key="slow_shot_count")
+        
+        # Reject Quantity (can be 0)
+        reject_quantity = st.number_input("Reject Quantity", min_value=0, step=1, key="reject_quantity")
+        
+        # Good PCS Quantity (manually entered)
+        good_pcs_quantity = st.number_input("Good PCS Quantity", min_value=0, step=1, key="good_pcs_quantity")
 
-    
     comments = st.text_area("Comments", key="comments")
-    
-    # Build final record
-    record = {
-        "User": st.session_state.current_user,
-        "EntryID": uuid.uuid4().hex,
-        "Timestamp": dynamic_record.get("Timestamp", sri_time),
-        "Date": dynamic_record.get("Date", date_value if date_value else sri_time),
-        "Item": item_value,
-        "Comments": comments
-    }
-    record.update(dynamic_record)
 
-    # Save locally
-    if st.button("Save Locally", key="submit_btn"):
-        missing = [k for k, v in record.items() if k != "Comments" and (v is None or v == "")]
-        if missing:
-            st.error(f"Please fill required fields. Missing: {', '.join(missing[:5])}")
+    if st.button("Submit", key="submit_btn"):
+        # Validate required fields
+        if target_quantity == 0:
+            st.error("Target Quantity cannot be zero")
+        elif actual_quantity == 0:
+            st.error("Actual Quantity cannot be zero")
+        elif good_pcs_quantity == 0:
+            st.error("Good PCS Quantity cannot be zero")
+            pass
         else:
             try:
+                entry_id = uuid.uuid4().hex
+                record = {
+                    "User": st.session_state.current_user,
+                    "EntryID": entry_id,
+                    "Timestamp": get_sri_lanka_time(),
+                    "Date": date_value,
+                    "Machine": machine_value,
+                    "Shift": shift_value,
+                    "Team": team_value,
+                    "Item": item_value,
+                    "Target_Quantity": target_quantity,
+                    "Actual_Quantity": actual_quantity,
+                    "Slow_shot_Count": slow_shot_count,
+                    "Reject_Quantity": reject_quantity,
+                    "Good_PCS_Quantity": good_pcs_quantity,
+                    "Comments": comments
+                }
                 save_to_local('production', record)
-                st.success(f"Saved locally! EntryID: {record['EntryID']}")
+                st.success(f"Saved locally! EntryID: {entry_id}")
+                
             except Exception as e:
                 st.error(f"Error saving data: {str(e)}")
 
-    # Display local entries - FIXED THE JSON PARSING ERROR
+    # Display local entries
     production_data = st.session_state.get('die_casting_production', [])
     if production_data:
         st.subheader("Local Entries (Pending Sync)")
         try:
-            # Convert to list of dictionaries - handle both dict and string formats
+            # Convert to list of dictionaries first
             data_for_df = []
             for record in production_data:
                 if isinstance(record, dict):
                     data_for_df.append(record)
-                elif isinstance(record, str):
-                    try:
-                        parsed_record = json.loads(record)
-                        data_for_df.append(parsed_record)
-                    except json.JSONDecodeError:
-                        continue
             
             if data_for_df:
                 local_df = pd.DataFrame(data_for_df)
-                display_cols = ["User", "Timestamp", "Date", "Item", 
-                                "Target_Quantity", "Actual_Quantity", "Good_PCS_Quantity"]
+                display_cols = ["User", "Timestamp", "Date", "Machine", "Shift", "Item", "Target_Quantity", "Actual_Quantity", "Good_PCS_Quantity"]
                 available_cols = [col for col in display_cols if col in local_df.columns]
                 if available_cols:
                     st.dataframe(local_df[available_cols].head(10))
                 else:
-                    st.dataframe(local_df.head(10))
+                    st.info("No displayable data available")
             else:
                 st.info("No valid production data available")
         except Exception as e:
             st.error(f"Error displaying data: {str(e)}")
 
-    # Sync button
+    # Sync button at the bottom
     if st.button("🔄 Sync with Google Sheets Now"):
         sync_with_google_sheets()
         st.rerun()
 
-
 # ------------------ Quality UI ------------------
 def quality_ui():
     st.subheader(f"Quality Data Entry - Inspector: {st.session_state.current_user}")
+    
+    # Debug info
+    if st.checkbox("Show debug info"):
+        st.write("Session state keys:", list(st.session_state.keys()))
+        st.write("die_casting_quality:", st.session_state.get('die_casting_quality', 'Not found'))
     
     # Refresh button at the top
     col1, col2 = st.columns([3, 1])
@@ -820,6 +775,7 @@ def quality_ui():
     
     col1, col2 = st.columns(2)
     
+    # In the quality_ui function, replace the values dictionary section:
     with col1:
         total_lot_qty = st.number_input("Total Lot Qty", min_value=1, step=1, key="total_lot_qty")
         sample_size = st.number_input("Sample Size", min_value=1, step=1, key="sample_size")
@@ -855,37 +811,44 @@ def quality_ui():
                 "Digital_Signature": digital_signature,
                 "Comments": comments
             }
-    
-            # Save inside the try block
+        
+        save_to_local('quality', record)
+        st.success(f"Quality data saved locally! Entry ID: {entry_id}")
+        
+        # Clear form after successful submission
+        st.rerun()
+            
+    except Exception as e:
+        st.error(f"Error saving quality data: {str(e)}")
+            
             save_to_local('quality', record)
             st.success(f"Quality data saved locally! Entry ID: {entry_id}")
-    
-            # Clear form after successful submission
-            st.rerun()
-    
+            
+            # Try to sync in background
+            if st.button("🔄 Sync Quality Data with Google Sheets Now"):
+                sync_with_google_sheets()
+                st.rerun()
+                
         except Exception as e:
             st.error(f"Error saving quality data: {str(e)}")
-
     
-    # Display local quality entries - FIXED THE JSON PARSING ERROR
+    # Display local quality entries
     quality_data = st.session_state.get('die_casting_quality', [])
+    st.write(f"Debug: Quality data length = {len(quality_data)}")  # Debug line
     
     if quality_data:
         st.subheader("Local Quality Entries (Pending Sync)")
         try:
-            # Convert to list of dictionaries - handle both dict and string formats
+            # Convert to list of dictionaries first
             data_for_df = []
             for record in quality_data:
                 if isinstance(record, dict):
                     data_for_df.append(record)
-                elif isinstance(record, str):
-                    try:
-                        parsed_record = json.loads(record)
-                        data_for_df.append(parsed_record)
-                    except json.JSONDecodeError:
-                        continue
+                else:
+                    st.write(f"Debug: Found non-dict record: {type(record)} - {record}")  # Debug line
             
             if data_for_df:
+                st.write(f"Debug: Valid records found: {len(data_for_df)}")  # Debug line
                 local_df = pd.DataFrame(data_for_df)
                 display_cols = ["User", "Timestamp", "Product", "Total_Lot_Qty", "Sample_Size", 
                                "AQL_Level", "Accept_Reject", "Results"]
@@ -893,11 +856,14 @@ def quality_ui():
                 if available_cols:
                     st.dataframe(local_df[available_cols].head(10))
                 else:
-                    st.dataframe(local_df.head(10))
+                    st.info("No displayable quality data available")
+                    st.write(f"Debug: Available columns: {list(local_df.columns)}")  # Debug line
             else:
                 st.info("No valid quality data available")
+                st.write("Debug: data_for_df is empty")  # Debug line
         except Exception as e:
             st.error(f"Error displaying quality data: {str(e)}")
+            st.write(f"Debug error: {str(e)}")  # Debug line
 
 # ------------------ Downtime UI ------------------
 def downtime_ui():
@@ -956,9 +922,6 @@ def downtime_ui():
     if st.button("Submit Downtime Data", key="submit_downtime_btn"):
         try:
             entry_id = uuid.uuid4().hex
-            # Ensure Duration_Mins is standard int
-            values["Duration_Mins"] = int(values.get("Duration_Mins", 0))
-            
             record = {
                 "User": st.session_state.current_user,
                 "EntryID": entry_id,
@@ -970,30 +933,24 @@ def downtime_ui():
             save_to_local('downtime', record)
             st.success(f"Downtime data saved locally! Entry ID: {entry_id}")
             
+            # Try to sync in background
+            if st.button("🔄 Sync Downtime Data Now"):
+                sync_with_google_sheets()
+                st.rerun()
+                
         except Exception as e:
             st.error(f"Error saving downtime data: {str(e)}")
-
-    # Manual sync button
-    if st.button("🔄 Sync Downtime Data Now"):
-        sync_with_google_sheets()
-        st.rerun()
     
-    # Display local downtime entries - FIXED THE JSON PARSING ERROR
+    # Display local downtime entries
     downtime_data = st.session_state.get('die_casting_downtime', [])
     if downtime_data:
         st.subheader("Local Downtime Entries (Pending Sync)")
         try:
-            # Convert to list of dictionaries - handle both dict and string formats
+            # Convert to list of dictionaries first
             data_for_df = []
             for record in downtime_data:
                 if isinstance(record, dict):
                     data_for_df.append(record)
-                elif isinstance(record, str):
-                    try:
-                        parsed_record = json.loads(record)
-                        data_for_df.append(parsed_record)
-                    except json.JSONDecodeError:
-                        continue
             
             if data_for_df:
                 local_df = pd.DataFrame(data_for_df)
@@ -1002,7 +959,7 @@ def downtime_ui():
                 if available_cols:
                     st.dataframe(local_df[available_cols].head(10))
                 else:
-                    st.dataframe(local_df.head(10))
+                    st.info("No displayable downtime data available")
             else:
                 st.info("No valid downtime data available")
         except Exception as e:
@@ -1048,4 +1005,11 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
+
 
