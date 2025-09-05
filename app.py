@@ -16,13 +16,13 @@ SRI_LANKA_TZ = pytz.timezone('Asia/Colombo')
 
 # ------------------ USER CREDENTIALS ------------------
 USER_CREDENTIALS = {
-    "user1": "pass123",
-    "user2": "password",
-    "user3": "abc123"
+    "user1": "12",
+    "user2": "123",
+    "user3": "1234"
 }
 
-QUALITY_SHARED_PASSWORD = "qualitypass"
-DOWNTIME_SHARED_PASSWORD = "downtimepass"
+QUALITY_SHARED_PASSWORD = "123"
+DOWNTIME_SHARED_PASSWORD = "1234"
 
 # ------------------ GOOGLE SHEET CONNECTION ------------------
 def get_gs_client():
@@ -271,4 +271,5 @@ elif choice == "Downtime Data Recordings":
             # Add Planned Item column
             downtime_config_df["Product"] = st.selectbox("Select Planned Item", prod_config_df["Product"].unique())
         data_entry("Downtime", downtime_config_df, st.session_state.downtime_logged_user, "downtime_local_data", "Downtime_History", include_product=False)
+
 
