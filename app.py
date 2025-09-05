@@ -277,3 +277,4 @@ elif choice == "Downtime Data Recordings":
         if not prod_config_df.empty:
             planned_item = st.selectbox("Select Planned Item", prod_config_df['Product'].unique(), key="downtime_planned_item")
         data_entry("Downtime", downtime_config_df, st.session_state.downtime_logged_user, "downtime_local_data", "Downtime_History", include_product=False, planned_item=planned_item)
+
