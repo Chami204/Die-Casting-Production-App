@@ -56,25 +56,27 @@ DOWNTIME_DEFAULT_FIELDS = [
 
 # ------------------ Local Storage Helpers ------------------
 def save_to_local_storage(data_type, data):
-    """Save data to browser's local storage"""
+    """Save data to a persistent session cache (don't stringify lists)."""
     try:
         key = f"die_casting_{data_type}"
-        json_data = json.dumps(data)
-        st.session_state[key] = json_data
+        # Store Python object directly to avoid breaking displays
+        st.session_state[key] = data
     except Exception as e:
         st.error(f"Error saving to local storage: {str(e)}")
 
 def load_from_local_storage(data_type, default=None):
-    """Load data from browser's local storage"""
+    """Load data from the session cache (fallback to JSON decoding if needed)."""
     try:
         key = f"die_casting_{data_type}"
         if key in st.session_state:
             loaded_data = st.session_state[key]
-            # Check if it's a JSON string and parse it
+            # Backward compatibility if something was stored as a JSON string previously
             if isinstance(loaded_data, str):
-                return json.loads(loaded_data)
-            else:
-                return loaded_data
+                try:
+                    return json.loads(loaded_data)
+                except Exception:
+                    return default if default is not None else []
+            return loaded_data
     except Exception as e:
         st.error(f"Error loading from local storage: {str(e)}")
     return default if default is not None else []
@@ -111,7 +113,7 @@ def save_to_local(data_type, record):
         # Save back to session state
         st.session_state[key] = current_data
         
-        # Save to local storage
+        # Save to local storage (keep as list, not JSON string)
         save_to_local_storage(data_type, current_data)
         
         # Mark as pending sync
@@ -771,11 +773,8 @@ def quality_ui():
     product = st.selectbox("Select Product", options=available_products, key="quality_product")
     
     # Quality fields
-    values = {}
-    
     col1, col2 = st.columns(2)
     
-    # In the quality_ui function, replace the values dictionary section:
     with col1:
         total_lot_qty = st.number_input("Total Lot Qty", min_value=1, step=1, key="total_lot_qty")
         sample_size = st.number_input("Sample Size", min_value=1, step=1, key="sample_size")
@@ -786,8 +785,6 @@ def quality_ui():
         results = st.text_input("Results", key="results")
         quality_inspector = st.text_input("Quality Inspector", value=st.session_state.current_user, key="quality_inspector")
         epf_number = st.text_input("EPF Number", key="epf_number")
-        
-        # Digital Signature
         st.write("Digital Signature:")
         digital_signature = st.text_input("Type your signature", key="digital_signature")
     
@@ -811,24 +808,9 @@ def quality_ui():
                 "Digital_Signature": digital_signature,
                 "Comments": comments
             }
-        
-        save_to_local('quality', record)
-        st.success(f"Quality data saved locally! Entry ID: {entry_id}")
-        
-        # Clear form after successful submission
-        st.rerun()
-            
-    except Exception as e:
-        st.error(f"Error saving quality data: {str(e)}")
-            
             save_to_local('quality', record)
             st.success(f"Quality data saved locally! Entry ID: {entry_id}")
-            
-            # Try to sync in background
-            if st.button("🔄 Sync Quality Data with Google Sheets Now"):
-                sync_with_google_sheets()
-                st.rerun()
-                
+            st.rerun()
         except Exception as e:
             st.error(f"Error saving quality data: {str(e)}")
     
@@ -839,7 +821,6 @@ def quality_ui():
     if quality_data:
         st.subheader("Local Quality Entries (Pending Sync)")
         try:
-            # Convert to list of dictionaries first
             data_for_df = []
             for record in quality_data:
                 if isinstance(record, dict):
@@ -1005,11 +986,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
