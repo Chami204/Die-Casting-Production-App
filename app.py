@@ -23,6 +23,17 @@ USER_CREDENTIALS = {
 QUALITY_SHARED_PASSWORD = "12"
 DOWNTIME_SHARED_PASSWORD = "123"
 
+# ------------------ STREAMLIT PAGE CONFIG ------------------
+st.set_page_config(page_title=APP_TITLE, layout="centered")
+st.title(APP_TITLE)
+
+# ------------------ SESSION STATE INIT ------------------
+for var in ["prod_logged_in", "qual_logged_in", "downtime_logged_in",
+            "logged_user", "qual_logged_user", "downtime_logged_user",
+            "prod_local_data", "qual_local_data", "downtime_local_data"]:
+    if var not in st.session_state:
+        st.session_state[var] = False if "logged" in var else []
+
 # ------------------ GOOGLE SHEET CONNECTION ------------------
 def get_gs_client():
     try:
@@ -73,6 +84,7 @@ def save_locally(data, storage_key):
         st.session_state[storage_key] = []
     st.session_state[storage_key].append(data)
     st.success("Data saved locally!")
+    st.experimental_rerun()  # Go back to top after saving
 
 # ------------------ SYNC FUNCTION ------------------
 def sync_local_data_to_sheet(local_key, history_sheet_name):
@@ -106,6 +118,7 @@ def sync_local_data_to_sheet(local_key, history_sheet_name):
     ws.append_rows(rows_to_append, value_input_option="USER_ENTERED")
     st.session_state[local_key] = []
     st.success(f"✅ {len(rows_to_append)} records synced to {history_sheet_name}!")
+    st.experimental_rerun()  # Go back to top after syncing
 
 # ------------------ DATA ENTRY FUNCTIONS ------------------
 def production_data_entry(logged_user):
@@ -215,15 +228,6 @@ def downtime_data_entry(logged_user):
         st.session_state.downtime_logged_in = False
         st.session_state.downtime_logged_user = ""
         st.experimental_rerun()
-
-# ------------------ APP CONFIG ------------------
-st.set_page_config(page_title=APP_TITLE, layout="centered")
-st.title(APP_TITLE)
-
-# ------------------ SESSION STATE INIT ------------------
-for var in ["prod_logged_in", "qual_logged_in", "downtime_logged_in", "logged_user", "qual_logged_user", "downtime_logged_user"]:
-    if var not in st.session_state:
-        st.session_state[var] = False if "logged" in var else ""
 
 # ------------------ LOAD CONFIG SHEETS ------------------
 sheet = get_gsheet_data(SHEET_NAME)
