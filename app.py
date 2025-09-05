@@ -165,9 +165,23 @@ def data_entry(section, config_df, logged_user, local_key, history_sheet_name, i
         if st.button(f"📤 Sync to Google Sheet ({section})"):
             sync_local_data_to_sheet(local_key, history_sheet_name)
     with col3:
+        # Logout button
         if st.button(f"🔓 Logout ({section})"):
-            st.session_state[f"{section.lower()}_logged_in"] = False
-            st.experimental_rerun()
+            # Reset the login flags
+            if section.lower() == "production":
+                st.session_state.prod_logged_in = False
+                st.session_state.logged_user = ""
+            elif section.lower() == "quality":
+                st.session_state.qual_logged_in = False
+                st.session_state.qual_logged_user = ""
+            elif section.lower() == "downtime":
+                st.session_state.downtime_logged_in = False
+                st.session_state.downtime_logged_user = ""
+            
+            # Just return from function instead of calling rerun
+            st.info("You have been logged out.")
+            return
+
 
 # ------------------ SYNC ALL LOCAL DATA ------------------
 def sync_all_local_data():
@@ -271,6 +285,7 @@ elif choice == "Downtime Data Recordings":
             # Add Planned Item column
             downtime_config_df["Product"] = st.selectbox("Select Planned Item", prod_config_df["Product"].unique())
         data_entry("Downtime", downtime_config_df, st.session_state.downtime_logged_user, "downtime_local_data", "Downtime_History", include_product=False)
+
 
 
 
