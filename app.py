@@ -15,12 +15,16 @@ APP_TITLE = "Die Casting Production"
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 SRI_LANKA_TZ = pytz.timezone('Asia/Colombo')
 DEFAULT_SUBTOPICS = [
-    "Input number of pcs",
-    "Input time",
-    "Output number of pcs",
-    "Output time",
-    "Num of pcs to rework",
-    "Number of rejects"
+    "Date",
+    "Machine", 
+    "Shift",
+    "Team",
+    "Item",
+    "Target_Quantity",
+    "Actual_Quantity",
+    "Slow_shot_Count",
+    "Reject_Quantity",
+    "Good_PCS_Quantity"
 ]
 # Quality section password
 QUALITY_PASSWORD = "quality123"
@@ -228,7 +232,7 @@ def ensure_google_sheets():
             ("Quality_Config", [["Field", "Type"]]),
             ("Downtime_Config", [["Machine", "Breakdown_Reason"]]),
             ("User_Credentials", [["Username", "Password", "Role"]]),
-            ("History", [["User", "EntryID", "Timestamp", "Product", "Comments"] + DEFAULT_SUBTOPICS]),
+            ("History", [["User", "EntryID", "Timestamp", "Comments"] + DEFAULT_SUBTOPICS]),  # Updated this line
             ("Quality_History", [["User", "EntryID", "Timestamp", "Product"] + QUALITY_DEFAULT_FIELDS]),
             ("Downtime_History", [["User", "EntryID", "Timestamp"] + DOWNTIME_DEFAULT_FIELDS + ["Comments"]])
         ]
@@ -341,11 +345,12 @@ def sync_with_google_sheets():
         # Sync production data
         sync_count = 0
         production_data = st.session_state.get('die_casting_production', [])
+        # In sync_with_google_sheets function, update the production data section:
         if production_data:
             try:
                 ws_history = sh.worksheet("History")
                 for record in production_data:
-                    headers = ["User", "EntryID", "Timestamp", "Product", "Comments"] + st.session_state.cfg.get(record["Product"], DEFAULT_SUBTOPICS.copy())
+                    headers = ["User", "EntryID", "Timestamp", "Comments"] + DEFAULT_SUBTOPICS
                     row = [record.get(h, "") for h in headers]
                     ws_history.append_row(row, value_input_option="USER_ENTERED")
                     sync_count += 1
@@ -546,44 +551,76 @@ def production_ui():
     with col1:
         st.write("")  # Spacer
     with col2:
-        if st.button("🔄 Refresh Products", key="prod_refresh_btn"):
+        if st.button("🔄 Refresh Data", key="prod_refresh_btn"):
             st.session_state.last_config_update = None
             if refresh_config_if_needed():
-                st.success("Products refreshed from Google Sheets!")
+                st.success("Data refreshed from Google Sheets!")
             else:
-                st.warning("Using local product cache")
+                st.warning("Using local data cache")
             st.rerun()
     
     refresh_config_if_needed()
     
-    if not st.session_state.cfg:
+    # Read downtime configuration for machines
+    downtime_config = read_downtime_config()
+    machines = downtime_config["machines"]
+    
+    # Read available products from production config
+    available_products = list(st.session_state.cfg.keys())
+    
+    if not available_products:
         st.info("No products available yet.")
         return
 
-    product = st.selectbox("Select Product", sorted(st.session_state.cfg.keys()), key="user_product")
-    current_subtopics = st.session_state.cfg.get(product, DEFAULT_SUBTOPICS.copy())
-    
     st.write("Fill **all fields** below:")
     values = {}
     
-    # Generate dynamic form fields
-    for subtopic in current_subtopics:
-        if "number" in subtopic.lower() or "num" in subtopic.lower() or "rejects" in subtopic.lower():
-            values[subtopic] = st.number_input(subtopic, min_value=0, step=1, key=f"num_{subtopic}")
-        elif "time" in subtopic.lower():
-            values[subtopic] = st.text_input(subtopic, value=get_sri_lanka_time(), key=f"time_{subtopic}")
-        else:
-            values[subtopic] = st.text_input(subtopic, key=f"text_{subtopic}")
+    col1, col2 = st.columns(2)
     
+    with col1:
+        # Date field (auto-filled with current date)
+        current_date = datetime.now(SRI_LANKA_TZ).strftime("%Y-%m-%d")
+        values["Date"] = st.text_input("Date", value=current_date, key="date_field")
+        
+        # Machine dropdown
+        values["Machine"] = st.selectbox("Machine", options=machines, key="machine_field")
+        
+        # Shift dropdown
+        values["Shift"] = st.selectbox("Shift", options=["Day", "Night"], key="shift_field")
+        
+        # Team dropdown
+        values["Team"] = st.selectbox("Team", options=["A", "B", "C"], key="team_field")
+        
+        # Item dropdown (from Production_Config)
+        values["Item"] = st.selectbox("Item", options=available_products, key="item_field")
+    
+    with col2:
+        # Target Quantity (cannot be 0)
+        values["Target_Quantity"] = st.number_input("Target Quantity", min_value=1, step=1, key="target_quantity")
+        
+        # Actual Quantity (cannot be 0)
+        values["Actual_Quantity"] = st.number_input("Actual Quantity", min_value=1, step=1, key="actual_quantity")
+        
+        # Slow shot Count (can be 0)
+        values["Slow_shot_Count"] = st.number_input("Slow shot Count", min_value=0, step=1, key="slow_shot_count")
+        
+        # Reject Quantity (can be 0)
+        values["Reject_Quantity"] = st.number_input("Reject Quantity", min_value=0, step=1, key="reject_quantity")
+
+        # Good pcs Qty
+        values["Good_PCS_Quantity"] = st.number_input("Good PCS Quantity", min_value=0, step=1, key="Good PCS Quantity")
+
     comments = st.text_area("Comments", key="comments")
 
     if st.button("Submit", key="submit_btn"):
-        # Validate required numeric fields
-        required_fields = [st for st in current_subtopics if "number" in st.lower() or "num" in st.lower()]
+        # Validate required fields
+        required_fields = ["Target_Quantity", "Actual_Quantity"]
         missing_fields = [f for f in required_fields if not values.get(f, 0)]
         
         if missing_fields:
             st.error(f"Please fill in all required fields: {', '.join(missing_fields)}")
+        elif values.get("Actual_Quantity", 0) < values.get("Reject_Quantity", 0):
+            st.error("Reject quantity cannot be greater than actual quantity")
         else:
             try:
                 entry_id = uuid.uuid4().hex
@@ -591,7 +628,6 @@ def production_ui():
                     "User": st.session_state.current_user,
                     "EntryID": entry_id,
                     "Timestamp": get_sri_lanka_time(),
-                    "Product": product,
                     **values,
                     "Comments": comments
                 }
@@ -619,7 +655,7 @@ def production_ui():
             
             if data_for_df:
                 local_df = pd.DataFrame(data_for_df)
-                display_cols = ["User", "Timestamp", "Product"]
+                display_cols = ["User", "Timestamp", "Date", "Machine", "Shift", "Item", "Target_Quantity", "Actual_Quantity", "Good_PCS_Quantity"]
                 available_cols = [col for col in display_cols if col in local_df.columns]
                 if available_cols:
                     st.dataframe(local_df[available_cols].head(10))
@@ -872,4 +908,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
