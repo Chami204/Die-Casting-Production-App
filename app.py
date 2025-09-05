@@ -135,7 +135,6 @@ def sync_local_data_to_sheet(local_key, history_sheet_name):
     st.session_state[local_key] = []
     st.success(f"✅ {len(rows_to_append)} records synced to {history_sheet_name}!")
 
-
 # ------------------ DATA ENTRY FUNCTIONS ------------------
 def production_data_entry(logged_user):
     df = st.session_state.production_config_df
@@ -165,13 +164,11 @@ def production_data_entry(logged_user):
 
     if submitted:
         save_locally(entry, "prod_local_data")
-        st.experimental_rerun()
 
     if sync_button:
         sync_local_data_to_sheet("prod_local_data", "Production_History")
         st.experimental_rerun()
 
-        # ------------------ LOGOUT BUTTON ------------------
     if st.button("Logout"):
         st.session_state.prod_logged_in = False
         st.session_state.logged_user = ""
@@ -205,12 +202,11 @@ def quality_data_entry(logged_user):
 
     if submitted:
         save_locally(entry, "qual_local_data")
-        st.experimental_rerun()
+
     if sync_button:
         sync_local_data_to_sheet("qual_local_data", "Quality_History")
         st.experimental_rerun()
 
-        # ------------------ LOGOUT BUTTON ------------------
     if st.button("Logout"):
         st.session_state.qual_logged_in = False
         st.session_state.qual_logged_user = ""
@@ -231,10 +227,6 @@ def downtime_data_entry(logged_user):
 
     entry = {"User": logged_user, "Product": selected_item, "DateTime": now}
 
-    # Initialize a flag for sync
-    if "downtime_synced" not in st.session_state:
-        st.session_state.downtime_synced = False
-
     with st.form(key="downtime_entry_form"):
         for col in df.columns:
             options = [str(x).strip() for x in df[col].dropna().unique() if str(x).strip() != ""]
@@ -248,26 +240,15 @@ def downtime_data_entry(logged_user):
 
     if submitted:
         save_locally(entry, "downtime_local_data")
-        st.success("Data saved locally!")
 
     if sync_button:
         sync_local_data_to_sheet("downtime_local_data", "Downtime_History")
-        st.session_state.downtime_synced = True  # Set flag
-
-    # Outside the form: rerun only if sync completed
-    if st.session_state.downtime_synced:
-        st.session_state.downtime_synced = False
         st.experimental_rerun()
 
-    # ------------------ LOGOUT BUTTON ------------------
     if st.button("Logout"):
         st.session_state.downtime_logged_in = False
         st.session_state.downtime_logged_user = ""
         st.experimental_rerun()
-
-
-
-
 
 # ------------------ LOAD CONFIG SHEETS ------------------
 sheet = get_gsheet_data(SHEET_NAME)
@@ -334,11 +315,3 @@ else:
                 st.experimental_rerun()
             else:
                 st.error("❌ Incorrect password!")
-
-
-
-
-
-
-
-
