@@ -5,8 +5,6 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime
 import pytz
 
-
-
 # ------------------ SETTINGS ------------------
 APP_TITLE = "Die Casting Production"
 SHEET_NAME = "FlowApp_Data"  # Replace with your Google Sheet name
@@ -22,16 +20,8 @@ USER_CREDENTIALS = {
     "user2": "123",
     "user3": "1234"
 }
-
 QUALITY_SHARED_PASSWORD = "12"
 DOWNTIME_SHARED_PASSWORD = "123"
-
-if "prod_config_df" not in st.session_state:
-    sheet = get_gsheet_data(SHEET_NAME)
-    if sheet:
-        st.session_state.prod_config_df = read_sheet(sheet, PRODUCTION_CONFIG_SHEET)
-    else:
-        st.session_state.prod_config_df = pd.DataFrame()
 
 # ------------------ GOOGLE SHEET CONNECTION ------------------
 def get_gs_client():
@@ -134,43 +124,29 @@ def load_config(sheet_name, config_sheet, force_refresh=False):
     return st.session_state.get(key, pd.DataFrame())
 
 # ------------------ DATA ENTRY ------------------
-def data_entry(section, config_df, logged_user, local_key, history_sheet_name, include_product=True):
+def data_entry(section, config_df, logged_user, local_key, history_sheet_name, include_product=True, planned_item=None):
     if config_df.empty:
         st.error(f"⚠️ {section} config not loaded!")
         return
 
     st.subheader(f"Please Enter the {section} Data")
-    
-    # For Downtime, include_product=False, we add Planned Item manually
-    if include_product:
-        products = config_df['Product'].unique().tolist()
-        selected_product = st.selectbox("Select Product", products)
-    else:
-        prod_config_df = st.session_state.get("prod_config_df", pd.DataFrame())
-        if not prod_config_df.empty:
-            selected_product = st.selectbox("Select Planned Item", prod_config_df['Product'].unique())
-        else:
-            st.error("⚠️ Production_Config not loaded! Cannot select Planned Item.")
-            return
-
-
     now = datetime.now(SRI_LANKA_TZ).strftime(TIME_FORMAT)
-    st.write(f"📅 Date & Time: {now}")
 
-    # Create entry dictionary
-    entry = {"User": logged_user}
-    if include_product or section.lower() == "downtime":
+    entry = {"User": logged_user, "DateTime": now}
+
+    if include_product:
+        selected_product = st.selectbox(f"Select Product ({section})", config_df['Product'].unique(), key=f"{section}_product")
         entry["Planned Item"] = selected_product
-    entry["DateTime"] = now
+    elif planned_item:
+        entry["Planned Item"] = planned_item
 
-    # Determine columns to use for data entry
+    # Determine columns
     if section.lower() == "downtime":
-        subtopic_columns = config_df.columns.tolist()  # all columns
+        subtopic_columns = [col for col in config_df.columns if col != "Product"]
     else:
         subtopic_columns = config_df["Subtopic"].tolist()
 
     for col_name in subtopic_columns:
-        # Check if column has dropdown options
         if section.lower() != "downtime" and str(config_df.loc[config_df['Subtopic'] == col_name, "Dropdown or Not"].values[0]).strip().lower() == "yes":
             options = str(config_df.loc[config_df['Subtopic'] == col_name, "Dropdown Options"].values[0]).split(",")
             entry[col_name] = st.selectbox(col_name, [opt.strip() for opt in options], key=f"{section}_{col_name}")
@@ -187,7 +163,6 @@ def data_entry(section, config_df, logged_user, local_key, history_sheet_name, i
             sync_local_data_to_sheet(local_key, history_sheet_name)
     with col3:
         if st.button(f"🔓 Logout ({section})"):
-            # Reset login flags
             if section.lower() == "production":
                 st.session_state.prod_logged_in = False
                 st.session_state.logged_user = ""
@@ -198,17 +173,16 @@ def data_entry(section, config_df, logged_user, local_key, history_sheet_name, i
                 st.session_state.downtime_logged_in = False
                 st.session_state.downtime_logged_user = ""
             st.info("You have been logged out.")
-            return
-
+            st.experimental_rerun()
 
 # ------------------ SYNC ALL LOCAL DATA ------------------
 def sync_all_local_data():
-    synced_sections = []
     sections = [
         ("prod_local_data", "Production_History"),
         ("qual_local_data", "Quality_History"),
         ("downtime_local_data", "Downtime_History")
     ]
+    synced_sections = []
     for local_key, sheet_name in sections:
         if local_key in st.session_state and st.session_state[local_key]:
             sync_local_data_to_sheet(local_key, sheet_name)
@@ -242,9 +216,9 @@ elif choice == "Production Team Login":
 
     if not st.session_state.prod_logged_in:
         usernames = list(USER_CREDENTIALS.keys())
-        selected_user = st.selectbox("Select Username", usernames)
-        entered_password = st.text_input("Enter Password", type="password")
-        if st.button("Login"):
+        selected_user = st.selectbox("Select Username", usernames, key="prod_user")
+        entered_password = st.text_input("Enter Password", type="password", key="prod_pass")
+        if st.button("Login", key="prod_login_btn"):
             actual_password = USER_CREDENTIALS.get(selected_user)
             if actual_password and entered_password == actual_password:
                 st.session_state.prod_logged_in = True
@@ -254,8 +228,7 @@ elif choice == "Production Team Login":
                 st.error("❌ Incorrect password!")
     else:
         config_df = load_config(SHEET_NAME, PRODUCTION_CONFIG_SHEET)
-        # Manual refresh
-        if st.button("🔄 Refresh Production Config Data"):
+        if st.button("🔄 Refresh Production Config Data", key="prod_refresh"):
             config_df = load_config(SHEET_NAME, PRODUCTION_CONFIG_SHEET, force_refresh=True)
         data_entry("Production", config_df, st.session_state.logged_user, "prod_local_data", "Production_History", include_product=True)
 
@@ -266,9 +239,9 @@ elif choice == "Quality Team Login":
         st.session_state.qual_logged_user = ""
 
     if not st.session_state.qual_logged_in:
-        entered_user = st.text_input("Enter Username")
-        entered_password = st.text_input("Enter Password", type="password")
-        if st.button("Login"):
+        entered_user = st.text_input("Enter Username", key="qual_user")
+        entered_password = st.text_input("Enter Password", type="password", key="qual_pass")
+        if st.button("Login", key="qual_login_btn"):
             if entered_password == QUALITY_SHARED_PASSWORD and entered_user.strip():
                 st.session_state.qual_logged_in = True
                 st.session_state.qual_logged_user = entered_user.strip()
@@ -277,7 +250,7 @@ elif choice == "Quality Team Login":
                 st.error("❌ Incorrect password!")
     else:
         config_df = load_config(SHEET_NAME, QUALITY_CONFIG_SHEET)
-        if st.button("🔄 Refresh Quality Config Data"):
+        if st.button("🔄 Refresh Quality Config Data", key="qual_refresh"):
             config_df = load_config(SHEET_NAME, QUALITY_CONFIG_SHEET, force_refresh=True)
         data_entry("Quality", config_df, st.session_state.qual_logged_user, "qual_local_data", "Quality_History", include_product=True)
 
@@ -288,9 +261,9 @@ elif choice == "Downtime Data Recordings":
         st.session_state.downtime_logged_user = ""
 
     if not st.session_state.downtime_logged_in:
-        entered_user = st.text_input("Enter Username")
-        entered_password = st.text_input("Enter Password", type="password")
-        if st.button("Login"):
+        entered_user = st.text_input("Enter Username", key="dt_user")
+        entered_password = st.text_input("Enter Password", type="password", key="dt_pass")
+        if st.button("Login", key="dt_login_btn"):
             if entered_password == DOWNTIME_SHARED_PASSWORD and entered_user.strip():
                 st.session_state.downtime_logged_in = True
                 st.session_state.downtime_logged_user = entered_user.strip()
@@ -298,16 +271,9 @@ elif choice == "Downtime Data Recordings":
             else:
                 st.error("❌ Incorrect password!")
     else:
-        # Load downtime config and production products for "Planned Item"
         downtime_config_df = load_config(SHEET_NAME, DOWNTIME_CONFIG_SHEET)
         prod_config_df = load_config(SHEET_NAME, PRODUCTION_CONFIG_SHEET)
-        # Create a temporary column 'Product' from Production_Config
-        if not downtime_config_df.empty and not prod_config_df.empty:
-            downtime_config_df = downtime_config_df.copy()
-            downtime_config_df["Product"] = st.selectbox("Select Planned Item", prod_config_df['Product'].unique())
-        if st.button("🔄 Refresh Downtime Config Data"):
-            downtime_config_df = load_config(SHEET_NAME, DOWNTIME_CONFIG_SHEET, force_refresh=True)
-        data_entry("Downtime", downtime_config_df, st.session_state.downtime_logged_user, "downtime_local_data", "Downtime_History", include_product=False)
-
-
-
+        planned_item = None
+        if not prod_config_df.empty:
+            planned_item = st.selectbox("Select Planned Item", prod_config_df['Product'].unique(), key="downtime_planned_item")
+        data_entry("Downtime", downtime_config_df, st.session_state.downtime_logged_user, "downtime_local_data", "Downtime_History", include_product=False, planned_item=planned_item)
