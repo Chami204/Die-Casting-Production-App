@@ -453,37 +453,27 @@ def sync_with_google_sheets():
             except Exception as e:
                 st.error(f"Error syncing quality data: {str(e)}")
         
-       
-        # Display local downtime entries
+        # Sync downtime data
         downtime_data = st.session_state.get('die_casting_downtime', [])
         if downtime_data:
-            st.subheader("Local Downtime Entries (Pending Sync)")
             try:
-                data_for_df = []
+                ws_downtime_history = sh.worksheet("Downtime_History")
                 for record in downtime_data:
-                    if isinstance(record, dict):
-                        data_for_df.append(record)
-                    else:
+                    # Ensure record is a dictionary, not a string
+                    if isinstance(record, str):
                         try:
-                            # Attempt to parse JSON string
-                            data_for_df.append(json.loads(record))
+                            record = json.loads(record)
                         except:
-                            continue  # skip invalid entries
-                
-                if data_for_df:
-                    local_df = pd.DataFrame(data_for_df)
-                    display_cols = ["User", "Timestamp", "Machine", "Shift", "Breakdown_Reason", "Duration_Mins"]
-                    available_cols = [col for col in display_cols if col in local_df.columns]
-                    if available_cols:
-                        st.dataframe(local_df[available_cols].head(10))
-                    else:
-                        st.info("No displayable downtime data available")
-                else:
-                    st.info("No valid downtime data available")
+                            continue
+                    
+                    if isinstance(record, dict):
+                        headers = ["User", "EntryID", "Timestamp"] + DOWNTIME_DEFAULT_FIELDS + ["Comments"]
+                        row = [record.get(h, "") for h in headers]
+                        ws_downtime_history.append_row(row, value_input_option="USER_ENTERED")
+                        sync_count += 1
+                        time.sleep(1)  # Delay between writes
             except Exception as e:
-                st.error(f"Error displaying downtime data: {str(e)}")
-
-
+                st.error(f"Error syncing downtime data: {str(e)}")
         
         if sync_count > 0:
             # Clear synced data from local storage
@@ -642,7 +632,6 @@ def admin_ui():
         st.rerun()
 
 # ------------------ Production UI ------------------
-# ------------------ Production UI ------------------
 def production_ui():
     st.subheader(f"Production Data Entry - User: {st.session_state.current_user}")
     
@@ -791,11 +780,6 @@ def production_ui():
 def quality_ui():
     st.subheader(f"Quality Data Entry - Inspector: {st.session_state.current_user}")
     
-    # Debug info
-    if st.checkbox("Show debug info"):
-        st.write("Session state keys:", list(st.session_state.keys()))
-        st.write("die_casting_quality:", st.session_state.get('die_casting_quality', 'Not found'))
-    
     # Refresh button at the top
     col1, col2 = st.columns([3, 1])
     with col1:
@@ -828,7 +812,6 @@ def quality_ui():
     
     col1, col2 = st.columns(2)
     
-    # In the quality_ui function, replace the values dictionary section:
     with col1:
         total_lot_qty = st.number_input("Total Lot Qty", min_value=1, step=1, key="total_lot_qty")
         sample_size = st.number_input("Sample Size", min_value=1, step=1, key="sample_size")
@@ -878,7 +861,6 @@ def quality_ui():
     
     # Display local quality entries
     quality_data = st.session_state.get('die_casting_quality', [])
-    st.write(f"Debug: Quality data length = {len(quality_data)}")  # Debug line
     
     if quality_data:
         st.subheader("Local Quality Entries (Pending Sync)")
@@ -888,11 +870,8 @@ def quality_ui():
             for record in quality_data:
                 if isinstance(record, dict):
                     data_for_df.append(record)
-                else:
-                    st.write(f"Debug: Found non-dict record: {type(record)} - {record}")  # Debug line
             
             if data_for_df:
-                st.write(f"Debug: Valid records found: {len(data_for_df)}")  # Debug line
                 local_df = pd.DataFrame(data_for_df)
                 display_cols = ["User", "Timestamp", "Product", "Total_Lot_Qty", "Sample_Size", 
                                "AQL_Level", "Accept_Reject", "Results"]
@@ -901,15 +880,12 @@ def quality_ui():
                     st.dataframe(local_df[available_cols].head(10))
                 else:
                     st.info("No displayable quality data available")
-                    st.write(f"Debug: Available columns: {list(local_df.columns)}")  # Debug line
             else:
                 st.info("No valid quality data available")
-                st.write("Debug: data_for_df is empty")  # Debug line
         except Exception as e:
             st.error(f"Error displaying quality data: {str(e)}")
-            st.write(f"Debug error: {str(e)}")  # Debug line
 
-# ------------------ Downtime UI ------------------ (unchanged)
+# ------------------ Downtime UI ------------------
 def downtime_ui():
     st.subheader(f"Machine Downtime Entry - Technician: {st.session_state.current_user}")
     
@@ -977,17 +953,16 @@ def downtime_ui():
                 "Comments": comments
             }
             
-            save_to_local('downtime', record)  # now fully JSON serializable
+            save_to_local('downtime', record)
             st.success(f"Downtime data saved locally! Entry ID: {entry_id}")
             
-            # Manual sync button
-            if st.button("🔄 Sync Downtime Data Now"):
-                sync_with_google_sheets()
-                st.rerun()
-                
         except Exception as e:
             st.error(f"Error saving downtime data: {str(e)}")
 
+    # Manual sync button
+    if st.button("🔄 Sync Downtime Data Now"):
+        sync_with_google_sheets()
+        st.rerun()
     
     # Display local downtime entries
     downtime_data = st.session_state.get('die_casting_downtime', [])
