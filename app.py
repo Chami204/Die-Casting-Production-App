@@ -69,8 +69,8 @@ def get_gsheet_data(sheet_name):
     if client:
         try:
             return client.open(sheet_name)
-        except Exception as e:
-            st.error(f"Error opening sheet '{sheet_name}': {e}")
+        except gspread.SpreadsheetNotFound:
+            st.error(f"Spreadsheet '{sheet_name}' not found. Make sure the service account has access.")
             return None
     else:
         return None
@@ -308,5 +308,6 @@ elif choice == "Downtime Data Recordings":
         if st.button("🔄 Refresh Downtime Config Data"):
             downtime_config_df = load_config(SHEET_NAME, DOWNTIME_CONFIG_SHEET, force_refresh=True)
         data_entry("Downtime", downtime_config_df, st.session_state.downtime_logged_user, "downtime_local_data", "Downtime_History", include_product=False)
+
 
 
