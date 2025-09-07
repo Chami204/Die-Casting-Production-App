@@ -167,12 +167,12 @@ def production_data_entry(logged_user):
     if st.button("Logout"):
         st.session_state.prod_logged_in = False
         st.session_state.logged_user = ""
-        st.experimental_rerun()
+        st.rerun()
 
     
     if sync_button:
         sync_local_data_to_sheet("prod_local_data", "Production_History")
-        st.experimental_rerun()
+        st.rerun()
 
 
 
@@ -207,11 +207,11 @@ def quality_data_entry(logged_user):
     if st.button("Logout"):
         st.session_state.qual_logged_in = False
         st.session_state.qual_logged_user = ""
-        st.experimental_rerun()
+        st.rerun()
 
     if sync_button:
         sync_local_data_to_sheet("qual_local_data", "Quality_History")
-        st.experimental_rerun()
+        st.rerun()
 
 def downtime_data_entry(logged_user):
     df = st.session_state.downtime_config_df
@@ -244,10 +244,10 @@ def downtime_data_entry(logged_user):
     if st.button("Logout"):
         st.session_state.downtime_logged_in = False
         st.session_state.downtime_logged_user = ""
-        st.experimental_rerun()
+        st.rerun()
     if sync_button:
         sync_local_data_to_sheet("downtime_local_data", "Downtime_History")
-        st.experimental_rerun()
+        st.rerun()
 
     
 # ------------------ LOAD CONFIG SHEETS ------------------
@@ -282,7 +282,7 @@ elif choice == "Production Team":
                 st.session_state.prod_logged_in = True
                 st.session_state.logged_user = selected_user
                 st.success(f"Welcome, {selected_user}!")
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("❌ Incorrect password!")
 
@@ -304,7 +304,7 @@ elif choice == "Quality Team":
                 st.session_state.qual_logged_in = True
                 st.session_state.qual_logged_user = entered_user
                 st.success(f"Welcome, {entered_user}!")
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("❌ Incorrect password!")
 
@@ -321,9 +321,10 @@ elif choice == "Downtime Data":
                 st.session_state.downtime_logged_in = True
                 st.session_state.downtime_logged_user = entered_user
                 st.success(f"Welcome, {entered_user}!")
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("❌ Incorrect password!")
+
 
 
 
