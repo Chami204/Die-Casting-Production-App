@@ -135,6 +135,32 @@ def sync_local_data_to_sheet(local_key, history_sheet_name):
     st.session_state[local_key] = []
     st.success(f"✅ {len(rows_to_append)} records synced to {history_sheet_name}!")
 
+# ------------------ UNSYNCED DATA COUNT FUNCTION ------------------
+def get_unsynced_counts():
+    counts = {
+        "Production": len(st.session_state.get("prod_local_data", [])),
+        "Quality": len(st.session_state.get("qual_local_data", [])),
+        "Downtime": len(st.session_state.get("downtime_local_data", []))
+    }
+    return counts
+
+# ------------------ SYNC ALL FUNCTION ------------------
+def sync_all_data():
+    # Sync production data
+    if st.session_state.get("prod_local_data"):
+        sync_local_data_to_sheet("prod_local_data", "Production_History")
+    
+    # Sync quality data
+    if st.session_state.get("qual_local_data"):
+        sync_local_data_to_sheet("qual_local_data", "Quality_History")
+    
+    # Sync downtime data
+    if st.session_state.get("downtime_local_data"):
+        sync_local_data_to_sheet("downtime_local_data", "Downtime_History")
+    
+    st.rerun()
+    
+
 # ------------------ DATA ENTRY FUNCTIONS ------------------
 def production_data_entry(logged_user):
     df = st.session_state.production_config_df
@@ -268,6 +294,32 @@ choice = st.sidebar.selectbox("Main Sections", menu)
 if choice == "Home":
     st.markdown("<h2 style='text-align: center;'>Welcome to Die Casting Production App</h2>", unsafe_allow_html=True)
     st.markdown("<h4 style='text-align: center;'>Please select a section to continue</h4>", unsafe_allow_html=True)
+    
+    # Add sync status and button
+    st.markdown("---")
+    st.subheader("📊 Data Sync Status")
+    
+    # Get counts of unsynced data
+    unsynced_counts = get_unsynced_counts()
+    total_unsynced = sum(unsynced_counts.values())
+    
+    if total_unsynced > 0:
+        st.warning(f"⚠️ You have {total_unsynced} unsynced records!")
+        
+        # Show breakdown by category
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Production", unsynced_counts["Production"])
+        with col2:
+            st.metric("Quality", unsynced_counts["Quality"])
+        with col3:
+            st.metric("Downtime", unsynced_counts["Downtime"])
+        
+        # Sync all button
+        if st.button("🔄 Sync All Data to Google Sheets", type="primary", use_container_width=True):
+            sync_all_data()
+    else:
+        st.success("✅ All data is synced with Google Sheets!")
 
 # PRODUCTION SECTION
 elif choice == "Production Team":
@@ -324,6 +376,7 @@ elif choice == "Downtime Data":
                 st.rerun()
             else:
                 st.error("❌ Incorrect password!")
+
 
 
 
