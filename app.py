@@ -16,12 +16,14 @@ SRI_LANKA_TZ = pytz.timezone('Asia/Colombo')
 
 # ------------------ USER CREDENTIALS ------------------
 USER_CREDENTIALS = {
-    "user1": "12",
-    "user2": "123",
-    "user3": "1234"
+    "Team Leader A ": "Team@A",
+    "Team Leader B ": "Team@B",
+    "Team Leader C ": "Team@C",
+    "Supervisor":"Team@123"
 }
+
 QUALITY_SHARED_PASSWORD = "12"
-DOWNTIME_SHARED_PASSWORD = "123"
+DOWNTIME_SHARED_PASSWORD = "DownT@123"
 
 # ------------------ STREAMLIT PAGE CONFIG ------------------
 st.set_page_config(page_title=APP_TITLE, layout="centered")
@@ -376,6 +378,7 @@ elif choice == "Downtime Data":
                 st.rerun()
             else:
                 st.error("❌ Incorrect password!")
+
 
 
 
